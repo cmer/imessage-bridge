@@ -20,7 +20,7 @@ enum Screenshotter {
                     appearance: ap, to: dir.appendingPathComponent("setup-\(suffix).png"))
             capture(MainView(state: demo, initialSelection: .agent(grok)), title: "iMessage Bridge", size: NSSize(width: 920, height: 870),
                     appearance: ap, to: dir.appendingPathComponent("agent-\(suffix).png"))
-            capture(MainView(state: demo, initialSelection: .safety), title: "iMessage Bridge", size: NSSize(width: 920, height: 800),
+            capture(MainView(state: demo, initialSelection: .safety), title: "iMessage Bridge", size: NSSize(width: 920, height: 900),
                     appearance: ap, to: dir.appendingPathComponent("safety-\(suffix).png"))
             capture(MainView(state: demo, initialSelection: .activity), title: "iMessage Bridge", size: main,
                     appearance: ap, to: dir.appendingPathComponent("activity-\(suffix).png"))

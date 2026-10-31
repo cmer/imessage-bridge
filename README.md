@@ -47,11 +47,12 @@ Requires macOS 14 or later. Takes about five minutes.
    shows you, then click *Approve*.
 
 4. **Turn on message screening (recommended).** Anyone who texts you can write
-   instructions your agent might follow. Screening checks incoming messages with
-   TypeSafe's Jev model and hides suspicious ones from your agent. Get an API key from
-   [TypeSafe](https://typesafe.ai), paste it on the app's Safety page and turn on *Check
-   incoming messages for prompt injection*. While you're there, add the people your agent
-   may text without asking you first.
+   instructions your agent might follow. Screening checks incoming messages and hides
+   suspicious ones from your agent. On the app's Safety page, click *Download* next to *On
+   this Mac* (about 270 MB; the model runs on your Mac). For better coverage, also add an
+   API key from [TypeSafe](https://typesafe.ai) under *Jev*. Screening is on whenever one
+   of the two is.
+   While you're there, add the people your agent may text without asking you first.
 
 That's it. Ask your agent "Which of my messages need a reply?" to try it.
 
@@ -142,20 +143,41 @@ Agents only see the tools they're allowed to use.
 
 ### Safety settings
 
-The **Safety** page has two independent layers against prompt injection:
+The **Safety** page follows the path a message takes. The card at the top shows that path
+(the checks, the agent, the recipient list) with each step lit when it's on, and how many
+messages were checked and flagged this session.
 
-- **Allowed recipients** (on by default). Sending to anyone not on the list always shows the
-  confirmation dialog, even for agents allowed to send without asking. The dialog has an
-  "Always allow sending to…" checkbox, and an optional toggle allows everyone in your
-  contacts. This is deterministic: no message wording can get past it.
-- **Prompt injection detection** (needs a [TypeSafe](https://typesafe.ai) or
-  [OpenRouter](https://openrouter.ai) API key, stored in the Keychain). Incoming messages
-  are checked with TypeSafe's Jev model before an agent sees them. By default only senders
-  not in your contacts are checked. A flagged message is hidden from the agent (or shown
-  with a warning), and that agent must get your confirmation for every send over the next
-  30 minutes. Local checks run first and catch blatant cases and hidden Unicode "tag" text
-  for free. Sensitivity and model are adjustable, and with OpenRouter you can require
-  providers that don't store or train on messages.
+**Before an agent reads a message**, incoming messages are screened for prompt injection,
+in order, stopping at the first check that flags the message:
+
+1. **Patterns**: blatant cases and hidden Unicode "tag" text. Free, always part of
+   screening.
+2. **On this Mac**: [Llama Prompt Guard 2 (86M)](https://huggingface.co/meta-llama/Llama-Prompt-Guard-2-86M)
+   in Core ML, about 10 ms per message on Apple Silicon. Free, and messages never leave
+   your Mac. Click *Download* (about 270 MB): the app fetches it from this repository's
+   GitHub releases and installs it only if its SHA-256 matches the one built into the
+   app. It catches jailbreaks and attempts to override an agent's instructions, but not
+   polite requests to an agent or fake screening policies. The ⋯ menu updates or removes
+   it; switching it off frees its memory.
+3. **Jev**: TypeSafe's model, which covers those too. *Add API Key…* opens a sheet to
+   choose [TypeSafe](https://typesafe.ai) or [OpenRouter](https://openrouter.ai), paste
+   a key (stored in the Keychain), and, with OpenRouter, require providers that don't
+   store or train on messages. The Jev model ID is under *Advanced*.
+
+Screening is on whenever one of the two models is; there's no separate master switch.
+Downloading the model or saving a key turns that check on. A flagged message is hidden
+from the agent (or shown with a warning), and that agent needs your confirmation for every
+send over the next 30 minutes. So does an agent that read a message an enabled check
+couldn't screen, for example when Jev is unreachable. *Sensitivity* (Relaxed, Balanced,
+Strict) sets how readily the models flag. By default only senders not in your contacts are
+screened. *Run Test* sends one normal message and three sample attacks through each
+enabled check and shows which flagged what.
+
+**Before an agent sends a message**, the recipient list applies (on by default). Sending
+to anyone not on it always shows the confirmation dialog, even for agents allowed to send
+without asking. The dialog has an "Always allow sending to…" checkbox, and a toggle allows
+everyone in your contacts. This check is deterministic: no message wording can get past
+it.
 
 The Jev prompt (`Sources/BridgeCore/JevPrompt.swift`) is designed around Datadog Security
 Labs' finding that a counterfeit policy embedded in the message can flip Jev's verdict.
@@ -204,6 +226,22 @@ cd imessage-bridge
 `install.sh` builds and signs the app, installs it to `/Applications/iMessage Bridge.app`,
 links the CLI at `~/.local/bin/imessage-bridge` and opens the app.
 
+The on-device model isn't in the repository; the app downloads it from a GitHub release
+(tag `prompt-guard-vN`). To build and publish a new one:
+
+```bash
+HF_TOKEN=hf_... scripts/build-prompt-guard.sh   # download, convert, zip (build/prompt-guard)
+scripts/publish-prompt-guard.sh 1               # release prompt-guard-v1, update PromptGuardAsset.swift
+```
+
+The source model is gated: accept the Llama 4 Community License on its
+[model page](https://huggingface.co/meta-llama/Llama-Prompt-Guard-2-86M) and use a token
+from that account. The build needs Python 3.10–3.13 and installs torch and coremltools in
+a virtualenv under `build/`. `scripts/build-prompt-guard.sh --install` also installs the
+model for your user, as if the app had downloaded it. The conversion runs the embedding
+lookup in Swift and the transformer in Core ML; `scripts/convert_prompt_guard.py`
+explains why.
+
 ### Signing
 
 `scripts/build.sh` signs with the first *Developer ID Application* identity in your
@@ -240,7 +278,8 @@ To uninstall, quit the app from the menu bar and delete `/Applications/iMessage 
 
 ```bash
 swift build          # debug build of all targets
-swift test           # unit tests (Swift Testing)
+swift test           # unit tests (Swift Testing); after build-prompt-guard.sh, also
+                     # checks the tokenizer, model and installer against the real model
 ./scripts/build.sh   # release .app in ./build
 ```
 
@@ -253,3 +292,8 @@ Layout: `Sources/BridgeCore` (database, contacts, decoding, validation),
 Message-body decoding, redaction and triage rules are adapted from
 [grokbot-imessage-skill](https://github.com/jeffhuber/grokbot-imessage-skill) by Jeff Huber
 (MIT). See [LICENSE](LICENSE).
+
+The on-device check is built with Llama: Llama Prompt Guard 2 (86M) by Meta, under the
+[Llama 4 Community License](https://www.llama.com/llama4/license/). Llama 4 is licensed
+under the Llama 4 Community License, Copyright © Meta Platforms, Inc. All Rights Reserved.
+The license, notice and Meta's Acceptable Use Policy are inside the model download.

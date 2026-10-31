@@ -79,15 +79,18 @@ enum DetectionSensitivity: Double, Codable, CaseIterable {
 
     var label: String {
         switch self {
-        case .high: return "High (flags more)"
+        case .high: return "Strict"
         case .balanced: return "Balanced"
-        case .low: return "Low (flags less)"
+        case .low: return "Relaxed"
         }
     }
 }
 
+/// Screening is on when at least one check is on and usable (the model is
+/// installed, or a Jev key is saved). There is no separate master switch.
 struct DetectionSettings: Codable, Equatable {
-    var enabled = false
+    var useLocalModel = true                // Prompt Guard on this Mac, once downloaded
+    var useJev = true                       // Jev, once an API key is saved
     var provider: JevProvider = .typesafe
     var model = ""                          // empty = provider default
     var sensitivity: DetectionSensitivity = .balanced
@@ -97,10 +100,19 @@ struct DetectionSettings: Codable, Equatable {
 
     init() {}
 
+    enum CodingKeys: String, CodingKey {
+        case useLocalModel, useJev, provider, model, sensitivity, scanContacts, hideFlagged, requireNoDataCollection
+        case enabled   // read only: the old master switch
+    }
+
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = DetectionSettings()
-        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? d.enabled
+        // Configs from before the per-check switches had one master switch;
+        // carry it over so screening someone turned off stays off.
+        let legacy = try c.decodeIfPresent(Bool.self, forKey: .enabled)
+        useLocalModel = try c.decodeIfPresent(Bool.self, forKey: .useLocalModel) ?? legacy ?? d.useLocalModel
+        useJev = try c.decodeIfPresent(Bool.self, forKey: .useJev) ?? legacy ?? d.useJev
         provider = try c.decodeIfPresent(JevProvider.self, forKey: .provider) ?? d.provider
         model = try c.decodeIfPresent(String.self, forKey: .model) ?? d.model
         sensitivity = try c.decodeIfPresent(DetectionSensitivity.self, forKey: .sensitivity) ?? d.sensitivity
@@ -108,6 +120,40 @@ struct DetectionSettings: Codable, Equatable {
         hideFlagged = try c.decodeIfPresent(Bool.self, forKey: .hideFlagged) ?? d.hideFlagged
         requireNoDataCollection = try c.decodeIfPresent(Bool.self, forKey: .requireNoDataCollection) ?? d.requireNoDataCollection
     }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(useLocalModel, forKey: .useLocalModel)
+        try c.encode(useJev, forKey: .useJev)
+        try c.encode(provider, forKey: .provider)
+        try c.encode(model, forKey: .model)
+        try c.encode(sensitivity, forKey: .sensitivity)
+        try c.encode(scanContacts, forKey: .scanContacts)
+        try c.encode(hideFlagged, forKey: .hideFlagged)
+        try c.encode(requireNoDataCollection, forKey: .requireNoDataCollection)
+    }
+}
+
+/// One sample message run through each enabled check (Safety page test).
+struct DetectionSample: Identifiable {
+    struct Verdict: Identifiable {
+        var id: String { check }
+        let check: String
+        let flagged: Bool?          // nil: the check failed
+        let note: String
+    }
+
+    let id: Int
+    let name: String
+    let verdicts: [Verdict]
+}
+
+/// Progress of downloading the on-device model.
+enum ModelDownload: Equatable {
+    case idle
+    case downloading(Double)
+    case installing
+    case failed(String)
 }
 
 /// An agent that recently read a flagged (or unscreened) message must get

@@ -43,6 +43,7 @@
 cd imessage-bridge
 ./scripts/install.sh</code></pre>
   <p><code>install.sh</code> builds and signs the app, installs it to <code>/Applications/iMessage Bridge.app</code>, links the CLI at <code>~/.local/bin/imessage-bridge</code> and opens the app.</p>
+  <p>The on-device prompt-injection model isn't in the repository; the app downloads it from a GitHub release. To build and publish a new one, run <code>HF_TOKEN=hf_... scripts/build-prompt-guard.sh</code>, then <code>scripts/publish-prompt-guard.sh 1</code>. The source model is gated: accept the Llama 4 Community License on its <a href="https://huggingface.co/meta-llama/Llama-Prompt-Guard-2-86M">model page</a> and use a token from that account.</p>
   <p><code>scripts/build.sh</code> signs with the first <em>Developer ID Application</em> identity in your keychain, or <code>$SIGN_IDENTITY</code> if set, and otherwise signs ad hoc. With a stable Developer ID, Full Disk Access survives rebuilds. With ad hoc signing, you have to grant it again after every rebuild.</p>
   <p>To have an agent do the whole install, point it at <a href="https://github.com/cmer/imessage-bridge/blob/main/AGENT_SETUP.md">AGENT_SETUP.md</a>.</p>
 
@@ -103,25 +104,31 @@ imessage-bridge call --agent grok-bot send_message '{"to": "+15555550142", "text
   </div>
 
   <h2 id="safety">Safety settings</h2>
-  <p>The Safety page has two independent layers against prompt injection, where someone texts you instructions hoping your agent follows them.</p>
+  <p>The Safety page follows the path a message takes. The card at the top shows that path, with each check lit when it's on, and how many messages were checked and flagged this session.</p>
 
-  <h3>Allowed recipients</h3>
-  <p>On by default. Sending to anyone not on the list always shows the confirmation dialog, even for agents allowed to send without asking. The dialog has an "Always allow sending to…" checkbox, and an optional toggle allows everyone in your contacts. This check is deterministic: no message wording can get past it.</p>
-
-  <h3>Prompt injection detection</h3>
-  <p>Incoming messages are checked with TypeSafe's Jev model before an agent sees them. It needs an API key from <a href="https://typesafe.ai">TypeSafe</a>, or from <a href="https://openrouter.ai">OpenRouter</a>, which also serves Jev. Keys are stored in the Keychain.</p>
+  <h3>Before an agent reads a message</h3>
+  <p>Incoming messages are screened for prompt injection, in order, stopping at the first check that flags the message:</p>
+  <ol>
+    <li><strong>Patterns</strong> catch blatant cases and hidden Unicode "tag" text. Free, and always part of screening.</li>
+    <li><strong>On this Mac</strong> runs <a href="https://huggingface.co/meta-llama/Llama-Prompt-Guard-2-86M">Llama Prompt Guard 2 (86M)</a> in Core ML, in about 10 ms per message on Apple Silicon. It's free and messages never leave your Mac. Click <em>Download</em> to get it (about 270 MB); the app installs it only if its checksum matches the one built into the app. It catches jailbreaks and attempts to override an agent's instructions, but not polite requests to an agent or fake screening policies. The ⋯ menu updates or removes it, and switching it off frees its memory. Built with Llama.</li>
+    <li><strong>Jev</strong>, TypeSafe's model, covers those too. <em>Add API Key…</em> opens a sheet where you choose <a href="https://typesafe.ai">TypeSafe</a> or <a href="https://openrouter.ai">OpenRouter</a>, paste a key (stored in the Keychain) and, with OpenRouter, require providers that don't store or train on messages. The Jev model ID is under <em>Advanced</em>.</li>
+  </ol>
   <ul>
-    <li>By default only senders not in your contacts are checked. Turn on <em>Also check messages from people in my contacts</em> to check everything.</li>
-    <li>A flagged message is hidden from the agent, or shown with a warning if you prefer. The agent that read it must get your confirmation for every send over the next 30 minutes.</li>
-    <li>Sensitivity and model are adjustable. With OpenRouter, you can require providers that don't store or train on messages.</li>
-    <li>Local checks run first and catch blatant cases and hidden Unicode "tag" text without an API call.</li>
-    <li><em>Test With Sample Messages</em> runs one normal message and two sample attacks through the check, so you can confirm your key works.</li>
+    <li>Screening is on whenever one of the two models is; there's no separate master switch. Downloading the model or saving a key turns that check on.</li>
+    <li>A flagged message is hidden from the agent, or shown with a warning if you prefer. The agent that read it needs your confirmation for every send over the next 30 minutes. So does an agent that read a message an enabled check couldn't screen, for example when Jev is unreachable.</li>
+    <li><em>Sensitivity</em> (Relaxed, Balanced, Strict) sets how readily the models flag.</li>
+    <li>By default only senders not in your contacts are screened. Turn on <em>Also screen messages from my contacts</em> to screen everything.</li>
+    <li><em>Run Test</em> sends one normal message and three sample attacks through each enabled check and shows which flagged what.</li>
   </ul>
+
+  <h3>Before an agent sends a message</h3>
+  <p>The recipient list is on by default. Sending to anyone not on it always shows the confirmation dialog, even for agents allowed to send without asking. The dialog has an "Always allow sending to…" checkbox, and a toggle allows everyone in your contacts. This check is deterministic: no message wording can get past it.</p>
+
   <p>The Jev prompt (<a href="https://github.com/cmer/imessage-bridge/blob/main/Sources/BridgeCore/JevPrompt.swift">JevPrompt.swift</a>) is built around Datadog Security Labs' finding that a fake policy embedded in a message can flip Jev's verdict. Definitions live only in trusted instructions, any attempt to label or redefine the check counts as evidence of an attack, and a separate question looks only for such attempts. Detection still isn't perfect: treat it as an alarm and rely on send confirmations and the recipient list.</p>
   <figure class="shot">
     <picture>
       <source srcset="images/safety-dark.png" media="(prefers-color-scheme: dark)">
-      <img src="images/safety-light.png" alt="Safety page with allowed recipients and prompt injection detection settings" loading="lazy">
+      <img src="images/safety-light.png" alt="Safety page: a card showing the path a message takes through the checks, the On this Mac and Jev checks, and the recipient list" loading="lazy">
     </picture>
   </figure>
 

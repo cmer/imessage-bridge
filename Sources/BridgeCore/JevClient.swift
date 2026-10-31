@@ -21,17 +21,12 @@ public struct JevConfig: Sendable {
     public var provider: JevProvider
     public var apiKey: String
     public var model: String
-    public var threshold: Double
-    public var scanContacts: Bool
     public var requireNoDataCollection: Bool
 
-    public init(provider: JevProvider, apiKey: String, model: String, threshold: Double,
-                scanContacts: Bool, requireNoDataCollection: Bool) {
+    public init(provider: JevProvider, apiKey: String, model: String, requireNoDataCollection: Bool) {
         self.provider = provider
         self.apiKey = apiKey
         self.model = model.isEmpty ? provider.defaultModel : model
-        self.threshold = threshold
-        self.scanContacts = scanContacts
         self.requireNoDataCollection = requireNoDataCollection
     }
 }
@@ -137,90 +132,5 @@ public final class VerdictCache: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         store = [:]
         order = []
-    }
-}
-
-public struct ScreenSummary: Sendable {
-    public var screened = 0
-    public var flagged: [(sender: String, reason: String)] = []
-    public var unavailable = 0
-    public var lastError: String?
-    public var cost = 0.0
-}
-
-/// Screens with local heuristics first, then Jev. Results are cached, so a
-/// message is only sent to the provider once per app session.
-public final class JevScreener: MessageScreener, @unchecked Sendable {
-    public static let maxRemotePerCall = 200
-    let config: JevConfig
-    let cache: VerdictCache
-    let onSummary: @Sendable (ScreenSummary) -> Void
-
-    public init(config: JevConfig, cache: VerdictCache, onSummary: @escaping @Sendable (ScreenSummary) -> Void) {
-        self.config = config
-        self.cache = cache
-        self.onSummary = onSummary
-    }
-
-    public func screen(_ items: [ScreenItem]) -> [Int64: ScreenVerdict] {
-        var out: [Int64: ScreenVerdict] = [:]
-        var summary = ScreenSummary()
-        var remote: [ScreenItem] = []
-
-        for item in items {
-            if !config.scanContacts && item.senderName != nil { continue }
-            if let cached = cache.get(item) {
-                out[item.rowID] = cached
-                if cached.isFlagged { summary.flagged.append((item.senderLabel, cached.reason)) }
-                continue
-            }
-            if let reason = InjectionHeuristics.blatantReason(item.text) {
-                let v = ScreenVerdict(kind: .flagged, score: 1, reason: reason)
-                cache.set(item, v)
-                out[item.rowID] = v
-                summary.flagged.append((item.senderLabel, reason))
-                continue
-            }
-            remote.append(item)
-        }
-
-        let toSend = Array(remote.prefix(JevScreener.maxRemotePerCall))
-        for item in remote.dropFirst(JevScreener.maxRemotePerCall) {
-            out[item.rowID] = ScreenVerdict(kind: .unavailable, score: nil, reason: "not screened (too many messages in one request)")
-            summary.unavailable += 1
-        }
-
-        let lock = NSLock()
-        DispatchQueue.concurrentPerform(iterations: toSend.count) { i in
-            let item = toSend[i]
-            let verdict: ScreenVerdict
-            var cost = 0.0
-            var err: String?
-            do {
-                let r = try JevClient.classify(text: item.text, senderInContacts: item.senderName != nil, config: config)
-                cost = r.cost
-                verdict = r.score >= config.threshold
-                    ? ScreenVerdict(kind: .flagged, score: r.score, reason: r.reason)
-                    : ScreenVerdict(kind: .clean, score: r.score, reason: "")
-                cache.set(item, verdict)
-            } catch {
-                err = (error as? LocalizedError)?.errorDescription ?? "\(error)"
-                verdict = ScreenVerdict(kind: .unavailable, score: nil, reason: "screening failed")
-            }
-            lock.lock()
-            out[item.rowID] = verdict
-            summary.screened += err == nil ? 1 : 0
-            summary.cost += cost
-            switch verdict.kind {
-            case .flagged: summary.flagged.append((item.senderLabel, verdict.reason))
-            case .unavailable: summary.unavailable += 1; summary.lastError = err
-            case .clean: break
-            }
-            lock.unlock()
-        }
-        if summary.screened > 0 || !summary.flagged.isEmpty || summary.unavailable > 0 {
-            onSummary(summary)
-        }
-        return out
     }
 }
