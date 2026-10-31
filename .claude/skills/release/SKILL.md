@@ -29,6 +29,9 @@ The script refuses to run unless all of these hold. Check them first and fix
 what you can:
 
 - On `main`, in sync with `origin/main`.
+- `CHANGELOG.md` has entries under `## Unreleased` (the script stops otherwise).
+  If it's empty, draft entries from `git log <last v* tag>..HEAD`, following the
+  rules in CLAUDE.md, and show them to the user before committing.
 - Clean working tree. If there are uncommitted changes, show the user
   `git status --short` and ask whether to commit them as part of the release.
   Don't commit or push without that yes.

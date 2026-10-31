@@ -245,7 +245,8 @@ explains why.
 
 ### Releases
 
-`scripts/release.sh <version>` bumps the version, runs the tests, builds, notarizes, makes
+`scripts/release.sh <version>` turns the Unreleased section of `CHANGELOG.md` into the
+new version's section (and its release notes), bumps the version, runs the tests, builds, notarizes, makes
 a DMG, signs it for Sparkle, and publishes the GitHub release (with the `appcast.xml` that
 installed apps read) and the Homebrew cask. Its header lists the one-time setup: notary
 credentials, and the Sparkle signing key in your keychain (account `imessage-bridge`),

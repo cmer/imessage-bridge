@@ -9,14 +9,16 @@
 # What it does:
 #   1. Checks: on main, clean tree, in sync with origin, tag is new, gh is
 #      logged in, a Developer ID identity and notary credentials exist.
-#   2. Sets CFBundleShortVersionString to the version and bumps CFBundleVersion.
+#   2. Sets CFBundleShortVersionString to the version and bumps CFBundleVersion,
+#      and turns CHANGELOG.md's "Unreleased" section into "X.Y.Z - date".
 #   3. Runs the tests, builds and signs the app (scripts/build.sh).
 #   4. Notarizes the app and staples the ticket, then packs it into a DMG
 #      (with an Applications shortcut), signs, notarizes and staples that too,
 #      so it opens without Gatekeeper warnings after downloading.
-#   5. Commits the version bump, creates an annotated tag vX.Y.Z, pushes both.
+#   5. Commits the version bump and changelog, creates an annotated tag vX.Y.Z, pushes both.
 #   6. Signs the DMG for Sparkle and writes appcast.xml, then creates the
-#      GitHub release with the DMG, its SHA-256 and the appcast. Installed
+#      GitHub release with the DMG, its SHA-256 and the appcast. The release
+#      notes are the version's CHANGELOG.md section. Installed
 #      apps read the appcast from the latest release to update themselves.
 #   7. Publishes the Homebrew cask (packaging/homebrew/imessage-bridge.rb) to
 #      the tap with the new version and checksum.
@@ -43,6 +45,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 PLIST=Resources/Info.plist
+CHANGELOG=CHANGELOG.md
 APP_NAME="iMessage Bridge"
 APP="$ROOT/build/$APP_NAME.app"
 NOTARY_PROFILE="${NOTARY_PROFILE:-imessage-bridge}"
@@ -145,6 +148,18 @@ git fetch --quiet --tags "$REMOTE"
     || die "$BRANCH isn't in sync with $REMOTE/$BRANCH; pull or push first"
 git rev-parse -q --verify "refs/tags/$TAG" >/dev/null && die "tag $TAG already exists"
 
+# The body of a CHANGELOG.md section ("Unreleased" or a version), blank lines trimmed.
+changelog_section() {
+    awk -v h="## $1" '
+        index($0, h) == 1 && (length($0) == length(h) || substr($0, length(h) + 1, 1) == " ") { on = 1; next }
+        on && /^## / { exit }
+        on { print }
+    ' "$CHANGELOG" | sed -e '/./,$!d' | sed -e ':a' -e '/^\n*$/{$d;N;ba' -e '}'
+}
+[[ -f "$CHANGELOG" ]] && grep -q '^## Unreleased$' "$CHANGELOG" || die "$CHANGELOG needs an \"## Unreleased\" section"
+[[ -n "$(changelog_section Unreleased | tr -d '[:space:]')" ]] \
+    || die "nothing under \"## Unreleased\" in $CHANGELOG; add this release's changes first"
+
 IDENTITY="${SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null \
     | awk -F'"' '/Developer ID Application/ {print $2; exit}')}"
 [[ -n "$IDENTITY" ]] || die "no Developer ID Application identity found; releases must be properly signed"
@@ -168,10 +183,14 @@ echo "    Signing as: $IDENTITY"
 
 # ---- version bump (undone on failure until committed)
 COMMITTED=0
-restore() { [[ $COMMITTED == 1 ]] || git checkout --quiet -- "$PLIST"; }
+restore() { [[ $COMMITTED == 1 ]] || git checkout --quiet -- "$PLIST" "$CHANGELOG"; }
 trap restore EXIT
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$PLIST"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD" "$PLIST"
+# "## Unreleased" stays at the top, empty, above the new version's section.
+sed -i '' "s/^## Unreleased\$/## Unreleased\\
+\\
+## $VERSION - $(date +%Y-%m-%d)/" "$CHANGELOG"
 
 # ---- test and build
 step "Running tests"
@@ -246,7 +265,7 @@ xmllint --noout "$DIST/appcast.xml"
 
 # ---- commit, tag, push
 step "Tagging $TAG"
-git add "$PLIST"
+git add "$PLIST" "$CHANGELOG"
 git commit --quiet -m "Release $TAG"
 COMMITTED=1
 git tag -a "$TAG" -m "iMessage Bridge $VERSION"
@@ -278,10 +297,11 @@ NOTES="$DIST/notes.md"
     echo
     echo "## Changes"
     echo
+    # Demote the changelog's "### Added" etc. under "## Changes".
+    changelog_section "$VERSION" | sed 's/^### /#### /'
     if [[ -n "$PREV_TAG" ]]; then
-        git log --no-merges --pretty='- %s' "$PREV_TAG..$TAG^" | grep -v '^- Release v' || true
-    else
-        git log --no-merges --pretty='- %s' "$TAG^" | grep -v '^- Release v' || true
+        echo
+        echo "Full list of commits: https://github.com/$REPO/compare/$PREV_TAG...$TAG"
     fi
 } > "$NOTES"
 
