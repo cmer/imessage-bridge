@@ -54,10 +54,20 @@ final class AppState: ObservableObject {
 
     /// Path of the bundled CLI, which agents run.
     var cliPath: String {
-        Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/imessage-bridge").path
+        if isDemo { return "/Applications/iMessage Bridge.app/Contents/MacOS/imessage-bridge" }
+        return Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/imessage-bridge").path
+    }
+
+    /// Demo instances (screenshot mode) never read or write real config.
+    let isDemo: Bool
+
+    /// The CLI path to show agents: the ~/.local/bin symlink when installed.
+    var agentCLIPath: String {
+        isDemo ? "/Users/you/.local/bin/imessage-bridge" : ClientSetup.cliPath(fallback: cliPath)
     }
 
     private init() {
+        isDemo = false
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         supportDir = base.appendingPathComponent("iMessage Bridge", isDirectory: true)
         try? FileManager.default.createDirectory(at: supportDir, withIntermediateDirectories: true,
@@ -65,6 +75,43 @@ final class AppState: ObservableObject {
         load()
         router = Router(state: self, service: service)
     }
+
+    /// Made-up data for website screenshots.
+    private init(demo: Void) {
+        isDemo = true
+        supportDir = FileManager.default.temporaryDirectory.appendingPathComponent("imessage-bridge-demo")
+        let now = Date()
+        agents = [
+            AgentRecord(name: "Grok Bot", tokenHash: "", tokenHint: "x7Qp", canRead: true, canSend: true,
+                        confirmSends: true, createdAt: now.addingTimeInterval(-86400 * 3), lastUsedAt: now.addingTimeInterval(-300)),
+            AgentRecord(name: "Claude Code", tokenHash: "", tokenHint: "M2kd", canRead: true, canSend: false,
+                        chatAccess: .selected, allowedChats: ["+15555550142", "+15555550188"],
+                        createdAt: now.addingTimeInterval(-86400), lastUsedAt: now.addingTimeInterval(-7200)),
+        ]
+        var s = BridgeSettings()
+        s.allowedRecipients = ["+1 (555) 555-0142", "sam@example.com"]
+        s.detection.enabled = true
+        s.detection.provider = .openrouter
+        settings = s
+        pairings = [PairingRequest(id: "demo", code: "482913", agentName: "Claude Code", pollSecretHash: "",
+                                   viaNetwork: false, remote: "127.0.0.1", requestedRead: true, requestedSend: false)]
+        activity = [
+            ActivityEntry(date: now.addingTimeInterval(-60), agent: "Grok Bot", action: "review_messages", detail: "days=2", ok: true),
+            ActivityEntry(date: now.addingTimeInterval(-120), agent: "Grok Bot", action: "send_message", detail: "to +1 (555) 555-0142 (42 characters)", ok: true),
+            ActivityEntry(date: now.addingTimeInterval(-400), agent: "Grok Bot", action: "injection_flagged", detail: "1 message from +1 555 010 0199", ok: false),
+            ActivityEntry(date: now.addingTimeInterval(-900), agent: "Claude Code", action: "get_conversation", detail: "chat=Sam days=7", ok: true),
+            ActivityEntry(date: now.addingTimeInterval(-1800), agent: "Claude Code", action: "search_messages", detail: "query=flight days=30", ok: true),
+            ActivityEntry(date: now.addingTimeInterval(-3600), agent: "Claude Code", action: "paired", detail: "read · 2 chats", ok: true),
+        ]
+        fullDiskAccess = true
+        automation = .granted
+        loopbackStatus = "Listening on 127.0.0.1:7542"
+        launchAtLogin = true
+        screenStats = (48, 2, 0.0123)
+        router = Router(state: self, service: service)
+    }
+
+    static func makeDemo() -> AppState { AppState(demo: ()) }
 
     func start() {
         startServers()
@@ -91,6 +138,7 @@ final class AppState: ObservableObject {
     }
 
     private func save() {
+        guard !isDemo else { return }
         let enc = JSONEncoder()
         enc.dateEncodingStrategy = .iso8601
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -221,10 +269,36 @@ final class AppState: ObservableObject {
         guard let idx = agents.firstIndex(where: { $0.id == agent.id }) else { return }
         var a = agent
         a.tokenHash = agents[idx].tokenHash      // never changed from the UI
+        a.tokenHint = agents[idx].tokenHint
         a.lastUsedAt = agents[idx].lastUsedAt    // the UI copy may be stale
         if !a.canSend { a.confirmSends = true }
         agents[idx] = a
         save()
+    }
+
+    /// Replaces an agent's token and saves it where the CLI looks for it
+    /// (~/.config/imessage-bridge/agents/<slug>.json, mode 600). For when the
+    /// credential file was deleted; the old token stops working.
+    @discardableResult
+    func issueNewToken(for id: UUID) -> Bool {
+        guard !isDemo, let idx = agents.firstIndex(where: { $0.id == id }) else { return false }
+        let token = Tokens.newAgentToken()
+        let dir = ClientSetup.credentialsDir
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o700])
+        let cred: [String: Any] = ["name": agents[idx].name, "url": localURL, "token": token]
+        guard let data = try? JSONSerialization.data(withJSONObject: cred, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]) else { return false }
+        let path = ClientSetup.credentialURL(agent: agents[idx].name).path
+        let fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0o600)
+        guard fd >= 0 else { return false }
+        let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        h.write(data)
+        fchmod(fd, 0o600)
+        agents[idx].tokenHash = Tokens.sha256Hex(token)
+        agents[idx].tokenHint = String(token.suffix(4))
+        log(agent: agents[idx].name, action: "new_token", detail: "issued from the app", ok: true)
+        save()
+        return true
     }
 
     func revoke(_ id: UUID) {
@@ -374,7 +448,7 @@ extension AppState {
 
     // Screening
 
-    func apiKey(for provider: JevProvider) -> String? { Keychain.get(provider.keychainAccount) }
+    func apiKey(for provider: JevProvider) -> String? { isDemo ? "demo" : Keychain.get(provider.keychainAccount) }
 
     func setAPIKey(_ key: String?, for provider: JevProvider) {
         Keychain.set(key?.trimmingCharacters(in: .whitespacesAndNewlines), for: provider.keychainAccount)

@@ -12,7 +12,12 @@ enum SidebarItem: Hashable {
 
 struct MainView: View {
     @ObservedObject var state: AppState
-    @StateObject private var selection = Box<SidebarItem?>(.setup)
+    @StateObject private var selection: Box<SidebarItem?>
+
+    init(state: AppState, initialSelection: SidebarItem = .setup) {
+        self.state = state
+        _selection = StateObject(wrappedValue: Box<SidebarItem?>(initialSelection))
+    }
 
     var body: some View {
         NavigationSplitView {
@@ -83,7 +88,7 @@ struct SetupView: View {
     @ObservedObject var state: AppState
 
     var pairPrompt: String {
-        let cli = ClientSetup.cliPath(fallback: state.cliPath)
+        let cli = state.agentCLIPath
         let q = ClientSetup.shellQuote(cli)
         return """
             Connect yourself to my iMessages through the iMessage Bridge app on this Mac.
@@ -93,7 +98,7 @@ struct SetupView: View {
                - Read-only: \(q) pair --name "<your name>" --read
                - Read and send: \(q) pair --name "<your name>" --read --send
                The command waits while I approve it on my Mac. Tell me the 6-digit code it prints so I can check it matches.
-            3. Once approved, follow the connection instructions the command prints. If you are Grok Bot, add the custom connector JSON it prints yourself; don't ask me to paste it.
+            3. Once approved, follow the connection instructions the command prints. If you are Grok Bot, don't add a connector yourself (yours run in the cloud, not on this Mac): ask me to click "Copy Grok Bot Connector" in the app and paste it into Add a custom connector.
             4. Run \(q) status --agent "<your name>" and tell me which permissions you ended up with.
             """
     }
@@ -165,38 +170,47 @@ struct CopyableText: View {
 struct ConnectSection: View {
     let agentName: String
     let cli: String
+    var checkCredential = true
+    var issueToken: () -> Bool = { false }
     @StateObject private var copied = Box<String?>(nil)
 
     static let grokBotID = "com.anysphere.sand"
 
+    private var grokJSON: String? {
+        if !checkCredential {   // screenshot demo
+            return ClientSetup.grokConnectorJSON(url: "http://127.0.0.1:7542", token: "imb_demo")
+        }
+        guard let c = ClientSetup.savedCredential(agent: agentName) else { return nil }
+        return ClientSetup.grokConnectorJSON(url: c.url, token: c.token)
+    }
+
     var body: some View {
         Section("Connect") {
-            if !ClientSetup.hasCredential(agent: agentName) {
-                Label("No saved credential for this agent on this Mac. It was paired elsewhere or the file was deleted. Run `imessage-bridge pair --name \"\(agentName)\"` here, then come back.",
+            if checkCredential && !ClientSetup.hasCredential(agent: agentName) {
+                Label("No saved credential for this agent on this Mac (it was paired elsewhere, or the file was deleted). Create a new token to connect it again; the old one stops working.",
                       systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
+                Button("Create New Token") {
+                    copied.value = issueToken() ? "token" : "token-failed"
+                }
+                if copied.value == "token-failed" {
+                    Text("Couldn't save the credential file.").font(.caption).foregroundStyle(.red)
+                }
             }
             VStack(alignment: .leading, spacing: 8) {
                 Text("Grok Bot").font(.headline)
-                Text("Grok Bot adds this connector itself when it pairs. If it didn't, copy the connector, then in Grok Bot choose **Add a custom connector** and paste. Grok Bot then calls these tools directly instead of asking to run commands.")
+                Text("Copy the connector, then in Grok Bot choose **Add a custom connector** and paste. Grok Bot then calls these tools directly instead of asking to run commands. The connector includes this agent's token, which Grok stores in your xAI account; it only works from this Mac.")
                     .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 HStack {
                     Button(copied.value == "grok" ? "Copied" : "Copy Grok Bot Connector") {
-                        copy(ClientSetup.mcpServersJSON(cli: cli, agent: agentName), tag: "grok")
+                        if let json = grokJSON { copy(json, tag: "grok") }
                     }
                     .buttonStyle(.borderedProminent)
+                    .disabled(grokJSON == nil)
                     Button("Open Grok Bot") { openGrokBot() }
                 }
-                DisclosureGroup("Enter the fields by hand instead") {
-                    VStack(alignment: .leading, spacing: 4) {
-                        LabeledContent("Name", value: ClientSetup.connectorName)
-                        LabeledContent("Type", value: "Local (stdio)")
-                        LabeledContent("Command", value: cli)
-                        LabeledContent("Arguments", value: ClientSetup.mcpArgs(agent: agentName).joined(separator: " "))
-                    }
-                    .textSelection(.enabled)
-                    .font(.callout)
-                }
+                Text("Grok Bot runs command-style connectors on xAI's servers, so the connector has to point at this Mac's address instead of the command-line tool. If it shows an error, delete it and Grok Bot can still use the bridge through commands you approve.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             .padding(.vertical, 4)
             VStack(alignment: .leading, spacing: 8) {
@@ -267,7 +281,8 @@ struct AgentDetailView: View {
                     chatPicker
                 }
             }
-            ConnectSection(agentName: m.agent.name, cli: ClientSetup.cliPath(fallback: state.cliPath))
+            ConnectSection(agentName: m.agent.name, cli: state.agentCLIPath, checkCredential: !state.isDemo,
+                           issueToken: { state.issueNewToken(for: m.agent.id) })
             Section("Details") {
                 LabeledContent("Token", value: "imb_…\(m.agent.tokenHint)")
                 LabeledContent("Paired", value: m.agent.createdAt.formatted(date: .abbreviated, time: .shortened))

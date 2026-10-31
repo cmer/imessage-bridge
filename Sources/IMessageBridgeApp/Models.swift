@@ -150,7 +150,7 @@ struct PairingRequest: Identifiable {
 
 struct ActivityEntry: Identifiable {
     let id = UUID()
-    let date = Date()
+    var date = Date()
     let agent: String
     let action: String
     let detail: String

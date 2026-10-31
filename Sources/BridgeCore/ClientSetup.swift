@@ -42,6 +42,46 @@ public enum ClientSetup {
         return String(decoding: data, as: UTF8.self)
     }
 
+    /// Grok Bot runs command connectors on xAI's cloud machines, where this
+    /// Mac's CLI doesn't exist. An HTTP connector with `placement: client`
+    /// asks the Grok Bot app on this Mac to make the connection instead, so
+    /// it can reach the bridge on 127.0.0.1. The token goes in the header.
+    public static func grokConnectorJSON(url: String, token: String) -> String {
+        let server: [String: Any] = [
+            "type": "http",
+            "url": url + "/mcp",
+            "headers": ["Authorization": "Bearer " + token],
+            "placement": "client",
+        ]
+        let obj: [String: Any] = ["mcpServers": [connectorName: server]]
+        let data = try! JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// The saved credential's URL and token, if this Mac has one for `agent`.
+    public static func savedCredential(agent: String) -> (url: String, token: String)? {
+        guard let d = try? Data(contentsOf: credentialURL(agent: agent)),
+              let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              let url = o["url"] as? String, let token = o["token"] as? String else { return nil }
+        return (url, token)
+    }
+
+    /// Turns `key=value` words into tool arguments: numbers and true/false
+    /// become JSON numbers and booleans, everything else stays a string.
+    public static func toolArguments(_ words: [String]) throws -> [String: Any] {
+        var out: [String: Any] = [:]
+        for w in words {
+            guard let eq = w.firstIndex(of: "="), eq != w.startIndex else {
+                throw BridgeError.invalid("expected key=value, got \"\(w)\"")
+            }
+            let key = String(w[..<eq]), raw = String(w[w.index(after: eq)...])
+            if let i = Int(raw) { out[key] = i }
+            else if raw == "true" || raw == "false" { out[key] = raw == "true" }
+            else { out[key] = raw }
+        }
+        return out
+    }
+
     public static func claudeCodeCommand(cli: String, agent: String) -> String {
         "claude mcp add \(connectorName) --scope user -- \(shellQuote(cli)) " + mcpArgs(agent: agent).joined(separator: " ")
     }

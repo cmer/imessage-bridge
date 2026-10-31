@@ -60,6 +60,14 @@ struct MenuBarIcon: View {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let args = CommandLine.arguments
+        if let i = args.firstIndex(of: "--screenshots"), i + 1 < args.count {
+            Task { @MainActor in
+                Screenshotter.run(to: URL(fileURLWithPath: args[i + 1]))
+                NSApp.terminate(nil)
+            }
+            return
+        }
         Task { @MainActor in
             let state = AppState.shared
             state.start()

@@ -7,6 +7,7 @@ import Security
 //   pair    request access; you approve it in the Mac app
 //   mcp     stdio MCP server that forwards to the app (for MCP clients)
 //   config  print setup snippets for MCP clients
+//   call    run one tool and print the result (for agents without MCP)
 //   status  check the app and a saved agent's token
 //   agents  list saved agent credentials
 //   forget  delete a saved credential
@@ -26,6 +27,7 @@ struct Args {
     var command = ""
     var options: [String: String] = [:]
     var flags: Set<String> = []
+    var positionals: [String] = []
 
     init(_ argv: [String]) {
         var it = argv.dropFirst().makeIterator()
@@ -37,6 +39,8 @@ struct Args {
                 flags.insert(a)
             } else if command.isEmpty {
                 command = a
+            } else {
+                positionals.append(a)
             }
         }
     }
@@ -273,12 +277,15 @@ func printConfig(_ c: Credential, showToken: Bool = false) {
     print("Connect an MCP client (pick the one you are):\n")
     print("• Claude Code:")
     print("    " + ClientSetup.claudeCodeCommand(cli: cli, agent: c.name) + "\n")
-    print("• Grok Bot: add this custom connector yourself now, the same way you would if the user")
-    print("  pasted it into chat. Don't ask the user to copy or paste anything:")
+    print("• Grok Bot: don't add a command (stdio) connector. Grok Bot runs those on xAI's cloud")
+    print("  machines, where this Mac's CLI doesn't exist. Ask the user to click \"Copy Grok Bot")
+    print("  Connector\" on this agent's page in the iMessage Bridge app and paste it into Grok Bot's")
+    print("  \"Add a custom connector\". Until then, run tools directly on this Mac, one line each:")
+    print("    \(ClientSetup.shellQuote(cli)) call --agent \(slug(c.name)) review_messages days=2")
+    print("    \(ClientSetup.shellQuote(cli)) call --agent \(slug(c.name)) get_conversation chat=\"Sam\" days=7")
+    print("    \(ClientSetup.shellQuote(cli)) call --agent \(slug(c.name))      (lists every tool)\n")
+    print("• Clients that launch a local MCP server on this Mac (Claude Desktop, Cursor, Codex, …):")
     print(indent(ClientSetup.mcpServersJSON(cli: cli, agent: c.name)))
-    print("  Only if you can't add connectors: ask the user to click \"Copy Grok Bot Connector\" in the")
-    print("  iMessage Bridge app and paste it into Grok Bot's \"Add a custom connector\".\n")
-    print("• Other clients that launch a local MCP server (Claude Desktop, Cursor, Codex, …): use the same JSON.")
     print("\n• Clients that speak MCP over HTTP:")
     print("    URL:    \(c.url)/mcp")
     print("    Header: Authorization: Bearer \(showToken ? c.token : "<token from \(credentialURL(c.name).path)>")")
@@ -326,6 +333,48 @@ func mcp(_ args: Args) {
             error(json(data)["error"] as? String ?? "iMessage Bridge returned HTTP \(s)")
         }
     }
+}
+
+/// `call --agent A [tool] [key=value …]`: one MCP tool call as a single,
+/// readable command line. With no tool, lists the tools this agent may use.
+func call(_ args: Args) {
+    guard let agent = args.options["--agent"] else {
+        fail("usage: imessage-bridge call --agent <name> <tool> [key=value ...]")
+    }
+    let cred = loadCredential(agent)
+    let client = Client(url: cred.url, fingerprint: cred.fingerprint)
+    _ = ensureAppRunning(client)
+    let auth = ["Authorization": "Bearer \(cred.token)"]
+
+    func rpc(_ method: String, _ params: [String: Any]) -> [String: Any] {
+        let body = try! JSONSerialization.data(withJSONObject: ["jsonrpc": "2.0", "id": 1, "method": method, "params": params])
+        switch client.send("POST", "mcp", body: body, headers: auth) {
+        case .unreachable(let why): fail("iMessage Bridge is not reachable at \(cred.url): \(why)")
+        case .response(200, let d):
+            let r = json(d)
+            if let e = r["error"] as? [String: Any] { fail(e["message"] as? String ?? "request failed") }
+            return r["result"] as? [String: Any] ?? [:]
+        case .response(let s, let d): fail(json(d)["error"] as? String ?? "HTTP \(s)")
+        }
+    }
+
+    guard let tool = args.positionals.first else {
+        let tools = rpc("tools/list", [:])["tools"] as? [[String: Any]] ?? []
+        if tools.isEmpty { print("This agent has no tools. Check its permissions in the app.") }
+        for t in tools {
+            let props = ((t["inputSchema"] as? [String: Any])?["properties"] as? [String: Any])?.keys.sorted() ?? []
+            print("\(t["name"] ?? "?")  \(props.map { "\($0)=…" }.joined(separator: " "))")
+            if let d = t["description"] as? String { print("    " + d) }
+        }
+        return
+    }
+    let arguments: [String: Any]
+    do { arguments = try ClientSetup.toolArguments(Array(args.positionals.dropFirst())) }
+    catch { fail((error as? LocalizedError)?.errorDescription ?? "\(error)") }
+    let result = rpc("tools/call", ["name": tool, "arguments": arguments])
+    let text = (result["content"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined(separator: "\n") ?? ""
+    if result["isError"] as? Bool == true { fail(text) }
+    print(text)
 }
 
 func status(_ args: Args) {
@@ -381,6 +430,10 @@ func usage() -> Never {
           imessage-bridge mcp --agent <agent>
               Run as a stdio MCP server, forwarding to the app with that agent's token.
 
+          imessage-bridge call --agent <agent> [<tool> key=value ...]
+              Run one tool and print its JSON result. Without a tool, lists the tools.
+              Example: imessage-bridge call --agent grok-bot get_conversation chat="Sam" days=7
+
           imessage-bridge config --agent <agent> [--show-token]
               Print setup snippets for Claude Code, Claude Desktop, Grok and other MCP clients.
 
@@ -395,6 +448,7 @@ let args = Args(CommandLine.arguments)
 switch args.command {
 case "pair": pair(args)
 case "mcp": mcp(args)
+case "call": call(args)
 case "config":
     guard let a = args.options["--agent"] else { fail("usage: imessage-bridge config --agent <name>") }
     printConfig(loadCredential(a), showToken: args.flags.contains("--show-token"))

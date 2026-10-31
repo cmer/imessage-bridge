@@ -62,6 +62,21 @@ enum Messaging {
         defer { confirmationOpen = false }
 
         NSApp.activate(ignoringOtherApps: true)
+        let alert = makeAlert(agent: agent, to: to, name: name, service: service, text: text,
+                              warnings: warnings, offerAllowRecipient: offerAllowRecipient)
+
+        let timer = Timer(timeInterval: 60, repeats: false) { _ in NSApp.abortModal() }
+        RunLoop.main.add(timer, forMode: .modalPanel)
+        let response = alert.runModal()
+        timer.invalidate()
+        let approved = response == .alertSecondButtonReturn
+        return Confirmation(approved: approved,
+                            alwaysAllowRecipient: approved && offerAllowRecipient && alert.suppressionButton?.state == .on)
+    }
+
+    /// The confirmation alert, built separately so screenshot mode can render it.
+    static func makeAlert(agent: String, to: String, name: String?, service: String, text: String,
+                          warnings: [String], offerAllowRecipient: Bool) -> NSAlert {
         let alert = NSAlert()
         alert.alertStyle = warnings.isEmpty ? .warning : .critical
         alert.messageText = "\(agent) wants to send a message"
@@ -95,14 +110,7 @@ enum Messaging {
         cancel.keyEquivalent = "\r"
         let send = alert.addButton(withTitle: "Send")
         send.keyEquivalent = ""
-
-        let timer = Timer(timeInterval: 60, repeats: false) { _ in NSApp.abortModal() }
-        RunLoop.main.add(timer, forMode: .modalPanel)
-        let response = alert.runModal()
-        timer.invalidate()
-        let approved = response == .alertSecondButtonReturn
-        return Confirmation(approved: approved,
-                            alwaysAllowRecipient: approved && offerAllowRecipient && alert.suppressionButton?.state == .on)
+        return alert
     }
 
     static func send(to: String, text: String, service: String) throws {

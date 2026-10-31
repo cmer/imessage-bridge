@@ -239,3 +239,24 @@ import Testing
         #expect(svc.render(msgs[0], book, scope, v)["text"] as? String == "dinner at 7?")
     }
 }
+
+@Suite struct GrokConnectorTests {
+    @Test func httpClientPlacement() throws {
+        let json = ClientSetup.grokConnectorJSON(url: "http://127.0.0.1:7542", token: "imb_x")
+        let o = try JSONSerialization.jsonObject(with: Data(json.utf8)) as! [String: Any]
+        let s = (o["mcpServers"] as! [String: Any])["imessage"] as! [String: Any]
+        #expect(s["type"] as? String == "http")
+        #expect(s["placement"] as? String == "client")
+        #expect(s["url"] as? String == "http://127.0.0.1:7542/mcp")
+        #expect((s["headers"] as? [String: String])?["Authorization"] == "Bearer imb_x")
+    }
+
+    @Test func toolArguments() throws {
+        let a = try ClientSetup.toolArguments(["chat=Sam Lee", "days=7", "include_me=true", "q=a=b"])
+        #expect(a["chat"] as? String == "Sam Lee")
+        #expect(a["days"] as? Int == 7)
+        #expect(a["include_me"] as? Bool == true)
+        #expect(a["q"] as? String == "a=b")
+        #expect(throws: BridgeError.self) { try ClientSetup.toolArguments(["oops"]) }
+    }
+}

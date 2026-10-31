@@ -116,6 +116,7 @@ opening the port on shared Wi-Fi.
 ```
 imessage-bridge pair --name <agent> [--read] [--send] [--url URL --fingerprint FP]
 imessage-bridge mcp --agent <agent>          # stdio MCP server for clients
+imessage-bridge call --agent <agent> [tool key=value …]   # one tool call, no MCP client needed
 imessage-bridge config --agent <agent>       # print client setup snippets
 imessage-bridge status [--agent <agent>]
 imessage-bridge agents | forget --agent <agent>

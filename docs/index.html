@@ -78,6 +78,19 @@
     padding: 4px 0 4px 14px;
     margin: 18px 0;
   }
+  .shot { margin: 18px 0 26px; }
+  .shot picture, .shot img { display: block; width: 100%; height: auto; }
+  .shot img { border-radius: 10px; border: 1px solid var(--line); box-shadow: 0 8px 30px rgba(0,0,0,.08); }
+  .shot.narrow img { max-width: 420px; }
+  .shot figcaption { color: var(--muted); font-size: 14px; margin-top: 8px; }
+  .steps { counter-reset: step; list-style: none; padding: 0; }
+  .steps > li { counter-increment: step; position: relative; padding-left: 44px; margin-bottom: 34px; }
+  .steps > li::before {
+    content: counter(step); position: absolute; left: 0; top: 0;
+    width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: #fff;
+    font-weight: 600; font-size: 15px; display: flex; align-items: center; justify-content: center;
+  }
+  .steps h3 { font-size: 18px; margin: 2px 0 8px; }
   footer {
     margin-top: 64px;
     padding-top: 20px;
@@ -102,7 +115,9 @@
   <div class="features">
     <div class="feature"><strong>Pairing with approval</strong><span>An agent asks to pair, you check a 6-digit code on the Mac and approve. It gets its own token.</span></div>
     <div class="feature"><strong>Per-agent permissions</strong><span>Read, send, ask before every send, hide verification codes, limit to selected conversations.</span></div>
-    <div class="feature"><strong>Confirm every send</strong><span>A native dialog shows the full message, with Cancel as the default. Capped at 30 sends an hour.</span></div>
+    <div class="feature"><strong>Confirm every send</strong><span>A native dialog shows the full message, with Don't Send as the default. Capped at 30 sends an hour.</span></div>
+    <div class="feature"><strong>Allowed recipients</strong><span>Sending to anyone not on your list always asks first, whatever the agent's settings.</span></div>
+    <div class="feature"><strong>Injection screening</strong><span>Optional: incoming messages are checked by TypeSafe's Jev model and suspicious ones hidden from agents.</span></div>
     <div class="feature"><strong>Activity log</strong><span>Every tool call, listed by agent. Message text is never logged.</span></div>
   </div>
 
@@ -121,24 +136,89 @@
   </div>
 
   <h2>Install</h2>
-  <p>Requires macOS 14 or later and the Xcode Command Line Tools. Xcode itself isn't needed.</p>
-  <pre><code>xcode-select --install
+  <p>Requires macOS 14 or later. Takes about five minutes.</p>
+  <ol class="steps">
+    <li>
+      <h3>Build and install the app</h3>
+      <p>You need the Xcode Command Line Tools (Xcode itself isn't needed). In Terminal:</p>
+      <pre><code>xcode-select --install          # skip if already installed
+git clone https://github.com/cmer/imessage-bridge.git
+cd imessage-bridge
 ./scripts/install.sh</code></pre>
-  <p>This builds the app, installs it to <code>/Applications</code>, links the CLI at <code>~/.local/bin/imessage-bridge</code> and opens the app. Then, once:</p>
-  <ol>
-    <li><strong>Full Disk Access:</strong> on the app's Setup page, click <em>Open Full Disk Access Settings</em> and turn on iMessage Bridge.</li>
-    <li><strong>Sending only:</strong> click <em>Request Permission</em> next to "Control Messages".</li>
+      <p>This builds and signs the app, installs it to <code>/Applications/iMessage Bridge.app</code>, links the command-line tool at <code>~/.local/bin/imessage-bridge</code> and opens the app. It lives in the menu bar (the two speech bubbles).</p>
+    </li>
+    <li>
+      <h3>Grant Full Disk Access</h3>
+      <p>The Setup page opens on first launch. Click <em>Open Full Disk Access Settings</em> and turn on <strong>iMessage Bridge</strong> (add it with <strong>+</strong> from Applications if it isn't listed). This lets the app read your Messages database and contacts. Agents never get this access themselves; they only see what the app hands them.</p>
+      <p>If you want agents to send messages, also click <em>Request Permission</em> next to "Control Messages" and allow it.</p>
+      <figure class="shot">
+        <picture>
+          <source srcset="images/setup-dark.png" media="(prefers-color-scheme: dark)">
+          <img src="images/setup-light.png" alt="Setup page with both permissions granted and the copyable pairing prompt" loading="lazy">
+        </picture>
+        <figcaption>Setup page: both permissions green, and the prompt to paste into your agent.</figcaption>
+      </figure>
+    </li>
+    <li>
+      <h3>Pair an agent</h3>
+      <p>Click <em>Copy</em> next to the prompt on the Setup page and paste it into Claude Code, Grok Bot or another agent that can run commands on your Mac. The agent asks whether you want read-only or read-and-send access, then requests it.</p>
+      <p>A window pops up with a 6-digit code. Check that it matches the code the agent shows you, adjust the permissions if you like, and click <em>Approve</em>.</p>
+      <figure class="shot narrow">
+        <picture>
+          <source srcset="images/pairing-dark.png" media="(prefers-color-scheme: dark)">
+          <img src="images/pairing-light.png" alt="Pairing request window showing a 6-digit code and permission checkboxes" loading="lazy">
+        </picture>
+        <figcaption>The pairing request. Nothing is shared until you approve.</figcaption>
+      </figure>
+      <p>Prefer the terminal? Pair yourself:</p>
+      <pre><code>imessage-bridge pair --name "Claude Code" --read            # read only
+imessage-bridge pair --name "Grok Bot" --read --send        # read and send</code></pre>
+    </li>
+    <li>
+      <h3>Connect the agent</h3>
+      <p>Open the agent's page in the sidebar. You can change its permissions here at any time, limit it to selected conversations, or revoke it.</p>
+      <figure class="shot">
+        <picture>
+          <source srcset="images/agent-dark.png" media="(prefers-color-scheme: dark)">
+          <img src="images/agent-light.png" alt="Agent page with permissions, conversations and Connect section" loading="lazy">
+        </picture>
+        <figcaption>An agent's page, with the Connect buttons below its permissions.</figcaption>
+      </figure>
+      <p><strong>Grok Bot:</strong> click <em>Copy Grok Bot Connector</em>, then in Grok Bot choose <em>Add a custom connector</em> and paste. Don't let Grok Bot add a command-style connector on its own: Grok runs those on xAI's servers, which can't reach your Mac. If the connector doesn't work, delete it; Grok Bot can still use the bridge by running one-line commands you approve, such as <code>imessage-bridge call --agent grok-bot review_messages days=2</code>.</p>
+      <p><strong>Claude Code:</strong> click <em>Copy Claude Code Command</em> and run it in Terminal. It looks like this:</p>
+      <pre><code>claude mcp add imessage --scope user -- ~/.local/bin/imessage-bridge mcp --agent claude-code</code></pre>
+      <p><strong>Claude Desktop, Cursor and other MCP clients</strong> that launch a local server: run <code>imessage-bridge config --agent &lt;name&gt;</code> for the JSON to paste.</p>
+    </li>
+    <li>
+      <h3>Set your safety rules</h3>
+      <p>On the Safety page, add the people agents may text without asking. Sends to anyone else always show a confirmation, even for agents allowed to send freely. Optionally, turn on prompt-injection detection with a TypeSafe or OpenRouter API key to screen incoming messages before agents read them.</p>
+      <figure class="shot">
+        <picture>
+          <source srcset="images/safety-dark.png" media="(prefers-color-scheme: dark)">
+          <img src="images/safety-light.png" alt="Safety page with allowed recipients and prompt injection detection settings" loading="lazy">
+        </picture>
+        <figcaption>Allowed recipients and optional prompt-injection detection.</figcaption>
+      </figure>
+    </li>
   </ol>
-  <p>Then pair an agent:</p>
-  <pre><code>imessage-bridge pair --name Claude --read --send
-imessage-bridge config --agent Claude   # prints client setup snippets</code></pre>
+  <p>Every tool call shows up on the Activity page. Message text is never logged.</p>
+      <figure class="shot">
+        <picture>
+          <source srcset="images/activity-dark.png" media="(prefers-color-scheme: dark)">
+          <img src="images/activity-light.png" alt="Activity log listing tool calls by agent" loading="lazy">
+        </picture>
+        <figcaption>The activity log.</figcaption>
+      </figure>
+
+  <h3>Updating and uninstalling</h3>
+  <p>To update, run <code>git pull &amp;&amp; ./scripts/install.sh</code> again. To uninstall, quit the app from the menu bar and delete <code>/Applications/iMessage Bridge.app</code>, <code>~/.local/bin/imessage-bridge</code>, <code>~/.config/imessage-bridge</code> and <code>~/Library/Application Support/iMessage Bridge</code>.</p>
 
   <h2>Security</h2>
   <p>The local server binds to 127.0.0.1 and rejects browser and DNS-rebinding requests. The app only stores a SHA-256 hash of each token, and you can revoke any agent at any time. Network access from other computers is off by default and uses TLS with a pinned certificate when on.</p>
   <p class="warn"><strong>Prompt injection is the main risk.</strong> Anyone who texts you can write instructions an agent might follow. Keep "Ask me before every send" on unless you have a good reason, and remember that messages an agent reads are sent to that agent's AI provider.</p>
 
   <footer>
-    MIT licensed. Message decoding, redaction and triage rules adapted from
+    <a href="https://github.com/cmer/imessage-bridge">Source on GitHub</a>. MIT licensed. Message decoding, redaction and triage rules adapted from
     <a href="https://github.com/jeffhuber/grokbot-imessage-skill">grokbot-imessage-skill</a> by Jeff Huber.
   </footer>
 </main>
