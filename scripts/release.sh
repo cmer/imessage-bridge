@@ -15,7 +15,9 @@
 #      (with an Applications shortcut), signs, notarizes and staples that too,
 #      so it opens without Gatekeeper warnings after downloading.
 #   5. Commits the version bump, creates an annotated tag vX.Y.Z, pushes both.
-#   6. Creates the GitHub release with the DMG and its SHA-256.
+#   6. Signs the DMG for Sparkle and writes appcast.xml, then creates the
+#      GitHub release with the DMG, its SHA-256 and the appcast. Installed
+#      apps read the appcast from the latest release to update themselves.
 #   7. Publishes the Homebrew cask (packaging/homebrew/imessage-bridge.rb) to
 #      the tap with the new version and checksum.
 #
@@ -25,6 +27,13 @@
 #       --apple-id you@example.com --team-id PMQU892978
 # Use another profile name with NOTARY_PROFILE=name. The tap defaults to
 # cmer/homebrew-tap; override with TAP=owner/repo.
+#
+# Sparkle update signing: the EdDSA private key lives in your login keychain
+# (account "imessage-bridge"); its public key is SUPublicEDKey in Info.plist.
+# Create it once on a new Mac by importing your backup:
+#   build/sparkle-tools/bin/generate_keys --account imessage-bridge -f <backup file>
+# (the tools are downloaded on first use). Without that key no app already
+# installed will accept an update.
 #
 # Nothing is committed, tagged or pushed until the build and notarization
 # succeed; on failure, the version change to Info.plist is undone.
@@ -41,9 +50,31 @@ REMOTE="${REMOTE:-origin}"
 TAP="${TAP:-cmer/homebrew-tap}"
 CASK_TEMPLATE="$ROOT/packaging/homebrew/imessage-bridge.rb"
 BRANCH=main
+SPARKLE_VERSION=2.10.1      # keep in step with Package.swift
+SPARKLE_SHA256=1a856d2a9edb8e628de88121d7be04cf0e2167f8641650b78fca00b14244cf27
+SPARKLE_ACCOUNT=imessage-bridge
+SPARKLE_TOOLS="$ROOT/build/sparkle-tools"
 
 die() { echo "error: $*" >&2; exit 1; }
 step() { echo; echo "==> $*"; }
+
+# Sparkle's command-line tools (generate_keys, sign_update), from the release
+# matching the framework the app embeds, checked against a pinned SHA-256.
+sparkle_tool() {
+    local tool="$1"; shift
+    if [[ ! -x "$SPARKLE_TOOLS/bin/$tool" ]]; then
+        local tmp
+        tmp="$(mktemp -d)"
+        curl -fsSL -o "$tmp/sparkle.tar.xz" \
+            "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-$SPARKLE_VERSION.tar.xz"
+        [[ "$(shasum -a 256 "$tmp/sparkle.tar.xz" | cut -d' ' -f1)" == "$SPARKLE_SHA256" ]] \
+            || die "the Sparkle $SPARKLE_VERSION download doesn't match its pinned checksum"
+        rm -rf "$SPARKLE_TOOLS"; mkdir -p "$SPARKLE_TOOLS"
+        tar -xf "$tmp/sparkle.tar.xz" -C "$SPARKLE_TOOLS" bin
+        rm -rf "$tmp"
+    fi
+    "$SPARKLE_TOOLS/bin/$tool" "$@"
+}
 
 # Write the cask for <version> <sha256> into the tap and push it.
 publish_cask() {
@@ -80,7 +111,7 @@ for a in "$@"; do
     case "$a" in
         --draft) DRAFT=(--draft) ;;
         --cask-only) CASK_ONLY=1 ;;
-        -h|--help) sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,39p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         -*) die "unknown option $a" ;;
         *) [[ -z "$VERSION" ]] || die "only one version, please"; VERSION="${a#v}" ;;
     esac
@@ -123,6 +154,11 @@ xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 \
 [[ "$(gh api "repos/$TAP" --jq .permissions.push 2>/dev/null)" == "true" ]] \
     || die "can't push to the Homebrew tap $TAP (set TAP=owner/repo to use another)"
 
+SPARKLE_KEY="$(sparkle_tool generate_keys -p --account "$SPARKLE_ACCOUNT" 2>/dev/null || true)"
+[[ -n "$SPARKLE_KEY" ]] || die "no Sparkle signing key in your keychain (account $SPARKLE_ACCOUNT); see the setup notes at the top of this script"
+[[ "$SPARKLE_KEY" == "$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$PLIST")" ]] \
+    || die "the Sparkle key in your keychain doesn't match SUPublicEDKey in $PLIST"
+
 REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
 OLD_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")"
 OLD_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST")"
@@ -139,7 +175,13 @@ trap restore EXIT
 
 # ---- test and build
 step "Running tests"
-swift test
+# With only the Command Line Tools, swift-testing's macros need their plugin path.
+TEST_ARGS=()
+CLT_PLUGINS=/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing
+if [[ "$(xcode-select -p 2>/dev/null)" == /Library/Developer/CommandLineTools* && -d "$CLT_PLUGINS" ]]; then
+    TEST_ARGS=(-Xswiftc -plugin-path -Xswiftc "$CLT_PLUGINS")
+fi
+swift test ${TEST_ARGS[@]+"${TEST_ARGS[@]}"}
 
 step "Building"
 SIGN_IDENTITY="$IDENTITY" "$ROOT/scripts/build.sh"
@@ -177,6 +219,31 @@ SHA="$(cut -d' ' -f1 "$DMG.sha256")"
 echo "    $DMG"
 echo "    sha256 $SHA"
 
+step "Signing the update for Sparkle"
+# Prints: sparkle:edSignature="..." length="..."
+ED_ATTRS="$(sparkle_tool sign_update --account "$SPARKLE_ACCOUNT" "$DMG")"
+[[ "$ED_ATTRS" == *'sparkle:edSignature="'*'length="'* ]] || die "sign_update failed: $ED_ATTRS"
+MIN_MACOS="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$PLIST")"
+cat > "$DIST/appcast.xml" <<XML
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>iMessage Bridge</title>
+    <link>https://github.com/$REPO</link>
+    <item>
+      <title>iMessage Bridge $VERSION</title>
+      <pubDate>$(LC_ALL=C date -u '+%a, %d %b %Y %H:%M:%S +0000')</pubDate>
+      <sparkle:version>$BUILD</sparkle:version>
+      <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>$MIN_MACOS</sparkle:minimumSystemVersion>
+      <sparkle:releaseNotesLink>https://github.com/$REPO/releases/tag/$TAG</sparkle:releaseNotesLink>
+      <enclosure url="https://github.com/$REPO/releases/download/$TAG/$(basename "$DMG")" type="application/octet-stream" $ED_ATTRS/>
+    </item>
+  </channel>
+</rss>
+XML
+xmllint --noout "$DIST/appcast.xml"
+
 # ---- commit, tag, push
 step "Tagging $TAG"
 git add "$PLIST"
@@ -187,7 +254,7 @@ git push --quiet "$REMOTE" "$BRANCH" "$TAG"
 
 # ---- GitHub release
 step "Creating GitHub release"
-PREV_TAG="$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)"
+PREV_TAG="$(git describe --tags --abbrev=0 --match 'v[0-9]*' "$TAG^" 2>/dev/null || true)"   # app tags only, not prompt-guard-v*
 NOTES="$DIST/notes.md"
 {
     echo "## Install"
@@ -218,9 +285,13 @@ NOTES="$DIST/notes.md"
     fi
 } > "$NOTES"
 
-gh release create "$TAG" "$DMG" "$DMG.sha256" \
+# Apps fetch releases/latest/download/appcast.xml, so a final release must be
+# "latest" (prompt-guard-v* releases never are); drafts and prereleases aren't.
+LATEST=()
+[[ ${#DRAFT[@]} -eq 0 && ${#PRERELEASE[@]} -eq 0 ]] && LATEST=(--latest)
+gh release create "$TAG" "$DMG" "$DMG.sha256" "$DIST/appcast.xml" \
     --repo "$REPO" --title "iMessage Bridge $VERSION" --notes-file "$NOTES" \
-    --verify-tag ${DRAFT[@]+"${DRAFT[@]}"} ${PRERELEASE[@]+"${PRERELEASE[@]}"}
+    --verify-tag ${DRAFT[@]+"${DRAFT[@]}"} ${PRERELEASE[@]+"${PRERELEASE[@]}"} ${LATEST[@]+"${LATEST[@]}"}
 
 # ---- Homebrew cask
 # Drafts and prereleases aren't public downloads (or shouldn't be the default),

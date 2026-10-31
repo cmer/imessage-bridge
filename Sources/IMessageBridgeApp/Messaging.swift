@@ -25,6 +25,8 @@ enum AutomationStatus: Equatable {
 enum Messaging {
     nonisolated static let messagesBundleID = "com.apple.MobileSMS"
     private static var confirmationOpen = false
+    /// A send confirmation is on screen (updates wait for it).
+    static var isConfirming: Bool { confirmationOpen }
 
     /// Checks (or with `ask`, requests) the Automation → Messages permission.
     /// Asking blocks until the user answers, so it runs off the main thread.

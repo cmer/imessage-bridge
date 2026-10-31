@@ -8,6 +8,9 @@ let package = Package(
         .executable(name: "IMessageBridgeApp", targets: ["IMessageBridgeApp"]),
         .executable(name: "imessage-bridge", targets: ["imessage-bridge"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.1"),
+    ],
     targets: [
         .target(
             name: "BridgeCore",
@@ -15,7 +18,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "IMessageBridgeApp",
-            dependencies: ["BridgeCore"]
+            dependencies: ["BridgeCore", .product(name: "Sparkle", package: "Sparkle")]
         ),
         .executableTarget(
             name: "imessage-bridge",

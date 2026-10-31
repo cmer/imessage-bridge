@@ -86,6 +86,7 @@ struct StatusRow<Actions: View>: View {
 
 struct SetupView: View {
     @ObservedObject var state: AppState
+    @ObservedObject private var updater = Updater.shared
 
     var pairPrompt: String {
         let cli = state.agentCLIPath
@@ -134,6 +135,19 @@ struct SetupView: View {
                 Toggle("Open at login", isOn: Binding(
                     get: { state.launchAtLogin },
                     set: { state.setLaunchAtLogin($0) }))
+            }
+            Section("Updates") {
+                Toggle(isOn: Binding(get: { updater.automaticallyInstalls || state.isDemo },
+                                     set: { updater.automaticallyInstalls = $0 })) {
+                    Text("Install updates automatically")
+                    Text("Checks daily. Installs once no agent has used the bridge for 10 minutes, then reopens.")
+                }
+                .disabled(!updater.isAvailable && !state.isDemo)
+                // "dev" outside a release build (swift run, screenshots).
+                LabeledContent(AppState.version == "dev" ? "Check for updates" : "Version \(AppState.version)") {
+                    Button("Check Now") { updater.checkForUpdates() }
+                        .disabled(!updater.canCheck)
+                }
             }
             Section("Connect an agent") {
                 Text("Paste this into Claude, Grok or another agent that can run commands on this Mac. You approve the request here and choose its permissions.")

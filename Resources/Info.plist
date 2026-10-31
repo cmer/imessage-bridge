@@ -34,5 +34,19 @@
 	<string>MIT License. Message decoding adapted from grokbot-imessage-skill by Jeff Huber (MIT).</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>iMessage Bridge can accept encrypted connections from your agents on other computers when you turn on network access.</string>
+	<key>SUAllowsAutomaticUpdates</key>
+	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<true/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/cmer/imessage-bridge/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>Y8CwCU2v1pazrE8qd+K20luJUcVNOUDu/tB3gFtk3rU=</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
 </dict>
 </plist>

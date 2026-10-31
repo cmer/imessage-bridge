@@ -154,7 +154,7 @@ imessage-bridge forget --agent &lt;agent&gt;</code></pre>
     <li>App settings and agents: <code>~/Library/Application Support/iMessage Bridge/</code></li>
     <li>API keys: the Keychain</li>
   </ul>
-  <p>To update, download the latest release and replace the app, or run <code>brew upgrade --cask imessage-bridge</code>. From source, run <code>git pull &amp;&amp; ./scripts/install.sh</code> in the repository.</p>
+  <p>The app updates itself with <a href="https://sparkle-project.org">Sparkle</a>. It checks GitHub once a day, downloads a new release in the background, verifies its signature, and installs it once no agent has used the bridge for 10 minutes, then reopens. Turn this off under <em>Setup → Updates</em>, or check by hand with <em>Check for Updates…</em> in the menu bar menu. From source, run <code>git pull &amp;&amp; ./scripts/install.sh</code> in the repository.</p>
   <p>To uninstall, quit the app from the menu bar and delete <code>/Applications/iMessage Bridge.app</code> (or run <code>brew uninstall --cask imessage-bridge</code>), then <code>~/.config/imessage-bridge</code>, <code>~/Library/Application Support/iMessage Bridge</code> and, if you built from source, <code>~/.local/bin/imessage-bridge</code>.</p>
 
   <h2 id="security">Security notes</h2>

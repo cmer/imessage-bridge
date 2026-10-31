@@ -16,7 +16,7 @@ enum Screenshotter {
 
         for (name, suffix) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
             let ap = NSAppearance(named: name)!
-            capture(MainView(state: demo, initialSelection: .setup), title: "iMessage Bridge", size: NSSize(width: 920, height: 820),
+            capture(MainView(state: demo, initialSelection: .setup), title: "iMessage Bridge", size: NSSize(width: 920, height: 950),
                     appearance: ap, to: dir.appendingPathComponent("setup-\(suffix).png"))
             capture(MainView(state: demo, initialSelection: .agent(grok)), title: "iMessage Bridge", size: NSSize(width: 920, height: 870),
                     appearance: ap, to: dir.appendingPathComponent("agent-\(suffix).png"))

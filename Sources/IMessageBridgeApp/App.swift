@@ -71,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             let state = AppState.shared
             state.start()
+            Updater.shared.start()
             if state.agents.isEmpty || !state.fullDiskAccess {
                 WindowManager.shared.showMain()
             }
@@ -85,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct MenuContent: View {
     @ObservedObject var state: AppState
+    @ObservedObject private var updater = Updater.shared
 
     var body: some View {
         Text(state.fullDiskAccess ? state.loopbackStatus : "Needs Full Disk Access")
@@ -100,6 +102,10 @@ struct MenuContent: View {
         Divider()
         Button("Open iMessage Bridge…") { WindowManager.shared.showMain() }
             .keyboardShortcut(",")
+        if updater.isAvailable {
+            Button("Check for Updates…") { updater.checkForUpdates() }
+                .disabled(!updater.canCheck)
+        }
         Button("Quit") { NSApp.terminate(nil) }
             .keyboardShortcut("q")
     }

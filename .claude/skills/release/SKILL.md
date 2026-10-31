@@ -38,6 +38,12 @@ what you can:
   If not, ask the user to run
   `! xcrun notarytool store-credentials imessage-bridge --apple-id <Apple ID> --team-id PMQU892978`
   (needs an app-specific password from appleid.apple.com).
+- The Sparkle update-signing key is in the keychain and matches Info.plist
+  (the script checks this too): `build/sparkle-tools/bin/generate_keys -p --account imessage-bridge`
+  should print the `SUPublicEDKey` from `Resources/Info.plist` (the tools download on the
+  script's first run). If it's missing on this Mac, ask the user to import their backup:
+  `! build/sparkle-tools/bin/generate_keys --account imessage-bridge -f <backup file>`.
+  Never generate a new key: installed apps would reject every update signed with it.
 
 ## 3. Run it
 
@@ -54,6 +60,8 @@ DMG), usually a few minutes each. Don't pass `--force`-style workarounds or skip
 ## 4. Afterwards
 
 - Report the release URL the script prints, the version and the SHA-256.
+- Check the update feed: `curl -sL https://github.com/cmer/imessage-bridge/releases/latest/download/appcast.xml`
+  should show the new version (drafts and prereleases don't move it).
 - A `--draft` or prerelease doesn't update the cask. Once the user publishes the
   draft on GitHub, run `scripts/release.sh --cask-only <version>`.
 - Reinstall locally so /Applications matches the release: `scripts/install.sh`.

@@ -243,6 +243,15 @@ model for your user, as if the app had downloaded it. The conversion runs the em
 lookup in Swift and the transformer in Core ML; `scripts/convert_prompt_guard.py`
 explains why.
 
+### Releases
+
+`scripts/release.sh <version>` bumps the version, runs the tests, builds, notarizes, makes
+a DMG, signs it for Sparkle, and publishes the GitHub release (with the `appcast.xml` that
+installed apps read) and the Homebrew cask. Its header lists the one-time setup: notary
+credentials, and the Sparkle signing key in your keychain (account `imessage-bridge`),
+whose public half is `SUPublicEDKey` in `Resources/Info.plist`. Keep a backup of that key:
+without it, apps already installed won't accept an update.
+
 ### Signing
 
 `scripts/build.sh` signs with the first *Developer ID Application* identity in your
@@ -256,8 +265,11 @@ Credentials are stored in `~/.config/imessage-bridge/agents/<agent>.json` (mode 
 App settings and agents are stored in `~/Library/Application Support/iMessage Bridge/`.
 API keys are stored in the Keychain.
 
-To update, download the latest release and replace the app, or run
-`brew upgrade --cask imessage-bridge`. From source, run `git pull && ./scripts/install.sh`.
+The app updates itself with [Sparkle](https://sparkle-project.org). It checks GitHub once a
+day, downloads a new release in the background, verifies its signature, and installs it
+once no agent has used the bridge for 10 minutes, then reopens. Turn this off under
+**Setup → Updates**, or check by hand with **Check for Updates…** in the menu bar menu.
+Homebrew leaves the app's updates to Sparkle. From source, run `git pull && ./scripts/install.sh`.
 
 To uninstall, quit the app from the menu bar and delete `/Applications/iMessage Bridge.app`
 (or run `brew uninstall --cask imessage-bridge`), then `~/.config/imessage-bridge`,

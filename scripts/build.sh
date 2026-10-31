@@ -28,6 +28,14 @@ cp "$BIN/IMessageBridgeApp" "$APP/Contents/MacOS/$APP_NAME"
 cp "$BIN/imessage-bridge" "$APP/Contents/MacOS/imessage-bridge"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
+# Sparkle (auto-updates). The app isn't sandboxed, so Sparkle's XPC services
+# aren't needed; dropping them leaves fewer things to sign.
+mkdir -p "$APP/Contents/Frameworks"
+ditto "$BIN/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framework"
+rm -rf "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices" \
+    "$APP/Contents/Frameworks/Sparkle.framework/XPCServices"
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/$APP_NAME"
+
 IDENTITY="${SIGN_IDENTITY:-}"
 if [[ -z "$IDENTITY" ]]; then
     IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
@@ -42,6 +50,10 @@ else
     SIGN=(--force --options runtime --sign -)
 fi
 
+SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
+codesign "${SIGN[@]}" "$SPARKLE/Versions/B/Autoupdate"
+codesign "${SIGN[@]}" "$SPARKLE/Versions/B/Updater.app"
+codesign "${SIGN[@]}" "$SPARKLE"
 codesign "${SIGN[@]}" --identifier "$BUNDLE_ID.cli" "$APP/Contents/MacOS/imessage-bridge"
 codesign "${SIGN[@]}" --identifier "$BUNDLE_ID" \
     --entitlements Resources/IMessageBridge.entitlements "$APP"

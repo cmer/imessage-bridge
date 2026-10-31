@@ -9,6 +9,7 @@ cask "imessage-bridge" do
   desc "Menu bar app that gives AI agents controlled access to iMessage"
   homepage "https://github.com/cmer/imessage-bridge"
 
+  auto_updates true
   depends_on arch:  :arm64
   depends_on macos: :sonoma
 
