@@ -1,0 +1,117 @@
+import AppKit
+import BridgeCore
+import Foundation
+
+enum AutomationStatus: Equatable {
+    case granted
+    case denied
+    case notDetermined
+    case messagesNotRunning
+    case unknown(Int32)
+
+    var label: String {
+        switch self {
+        case .granted: return "Allowed"
+        case .denied: return "Denied"
+        case .notDetermined: return "Not requested yet"
+        case .messagesNotRunning: return "Open Messages to check"
+        case .unknown(let c): return "Unknown (\(c))"
+        }
+    }
+}
+
+/// Talks to Messages.app and owns the send-confirmation dialog.
+@MainActor
+enum Messaging {
+    nonisolated static let messagesBundleID = "com.apple.MobileSMS"
+    private static var confirmationOpen = false
+
+    /// Checks (or with `ask`, requests) the Automation → Messages permission.
+    /// Asking blocks until the user answers, so it runs off the main thread.
+    nonisolated static func automationStatus(ask: Bool) -> AutomationStatus {
+        var target = AEAddressDesc()
+        let id = messagesBundleID
+        let created = id.withCString { ptr in
+            AECreateDesc(typeApplicationBundleID, ptr, id.utf8.count, &target)
+        }
+        guard created == noErr else { return .unknown(Int32(created)) }
+        defer { AEDisposeDesc(&target) }
+        let status = AEDeterminePermissionToAutomateTarget(&target, typeWildCard, typeWildCard, ask)
+        switch status {
+        case noErr: return .granted
+        case OSStatus(errAEEventNotPermitted): return .denied
+        case OSStatus(errAEEventWouldRequireUserConsent): return .notDetermined
+        case OSStatus(procNotFound): return .messagesNotRunning
+        default: return .unknown(status)
+        }
+    }
+
+    /// Native dialog showing the full message. Cancel is the default button;
+    /// closing, timing out or any failure means "don't send".
+    static func confirmSend(agent: String, to: String, name: String?, service: String, text: String) -> Bool {
+        guard !confirmationOpen else { return false }
+        confirmationOpen = true
+        defer { confirmationOpen = false }
+
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "\(agent) wants to send a message"
+        let who = name.map { "\($0) (\(to))" } ?? to
+        alert.informativeText = "To: \(who)\nVia: \(service)\n\nRead the full message below before sending."
+
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 380, height: 160))
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        let tv = NSTextView(frame: scroll.bounds)
+        tv.string = text
+        tv.isEditable = false
+        tv.isSelectable = true
+        tv.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        tv.autoresizingMask = [.width]
+        tv.textContainerInset = NSSize(width: 4, height: 4)
+        scroll.documentView = tv
+        alert.accessoryView = scroll
+
+        let cancel = alert.addButton(withTitle: "Don't Send")
+        cancel.keyEquivalent = "\r"
+        let send = alert.addButton(withTitle: "Send")
+        send.keyEquivalent = ""
+
+        let timer = Timer(timeInterval: 60, repeats: false) { _ in NSApp.abortModal() }
+        RunLoop.main.add(timer, forMode: .modalPanel)
+        let response = alert.runModal()
+        timer.invalidate()
+        return response == .alertSecondButtonReturn
+    }
+
+    static func send(to: String, text: String, service: String) throws {
+        let svc = service == "SMS" ? "SMS" : "iMessage"
+        let script = """
+            set msgBody to "\(escape(text))"
+            tell application "Messages"
+                set svc to 1st service whose service type = \(svc)
+                send msgBody to buddy "\(escape(to))" of svc
+            end tell
+            """
+        guard let apple = NSAppleScript(source: script) else {
+            throw BridgeError.failed("could not build the AppleScript")
+        }
+        var err: NSDictionary?
+        apple.executeAndReturnError(&err)
+        if let err {
+            let msg = err[NSAppleScript.errorMessage] as? String ?? "\(err)"
+            let num = err[NSAppleScript.errorNumber] as? Int ?? 0
+            if num == -1743 {
+                throw BridgeError.forbidden("macOS blocked sending: allow iMessage Bridge to control Messages in System Settings → Privacy & Security → Automation.")
+            }
+            throw BridgeError.failed("Messages could not send: \(msg)")
+        }
+    }
+
+    /// AppleScript string literal escaping (backslash first). Text is already
+    /// validated to contain no control characters other than \n \r \t.
+    static func escape(_ s: String) -> String {
+        s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+    }
+}
