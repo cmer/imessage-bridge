@@ -236,7 +236,8 @@ final class Router {
         if agent.confirmSends || !reasons.isEmpty {
             let result = await MainActor.run {
                 Messaging.confirmSend(agent: agent.name, to: to, name: name, service: svc, text: text,
-                                      warnings: reasons, offerAllowRecipient: unknownRecipient)
+                                      warnings: reasons, offerAllowRecipient: unknownRecipient,
+                                      offerStopAsking: agent.confirmSends)
             }
             guard result.approved else {
                 await MainActor.run {
@@ -247,6 +248,9 @@ final class Router {
             }
             if result.alwaysAllowRecipient {
                 await MainActor.run { try? state.addAllowedRecipient(to) }
+            }
+            if result.stopAsking {
+                await MainActor.run { state.stopConfirmingSends(agent.id) }
             }
         }
         try await MainActor.run { try Messaging.send(to: to, text: text, service: svc) }

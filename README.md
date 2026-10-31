@@ -121,7 +121,7 @@ Each agent's page in the app has buttons to copy its setup, and
 ### Agent permissions
 
 Each agent's page sets: read, send, ask before every send (a native dialog with the full
-message, Don't Send as the default), hide verification codes/card/SSN numbers, network access,
+message, Don't Send as the default; its "Don't ask again" checkbox turns this off), hide verification codes/card/SSN numbers, network access,
 and all conversations or only selected ones. With "only selected conversations", every
 tool, including contact lookup and sending, is limited to those chats. Sends are capped at
 30 per hour per agent. The Activity page lists every tool call by agent; message text is

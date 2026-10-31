@@ -296,6 +296,12 @@ struct AgentDetailView: View {
         .formStyle(.grouped)
         .navigationTitle(m.agent.name)
         .onChange(of: m.agent) { _, new in state.update(new) }
+        // The send dialog's "Don't ask again" changes this outside the page.
+        .onReceive(state.$agents) { agents in
+            if let current = agents.first(where: { $0.id == m.agent.id }), current.confirmSends != m.agent.confirmSends {
+                m.agent.confirmSends = current.confirmSends
+            }
+        }
         .confirmationDialog("Revoke \(m.agent.name)'s access?", isPresented: $m.confirmRevoke) {
             Button("Revoke", role: .destructive) { state.revoke(m.agent.id) }
         } message: {

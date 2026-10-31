@@ -289,6 +289,15 @@ final class AppState: ObservableObject {
         save()
     }
 
+    /// "Don't ask again" in the send dialog: the agent may send without the
+    /// dialog, except when a recipient or taint check asks anyway.
+    func stopConfirmingSends(_ id: UUID) {
+        guard let idx = agents.firstIndex(where: { $0.id == id }), agents[idx].canSend else { return }
+        agents[idx].confirmSends = false
+        save()
+        log(agent: "You", action: "confirm_sends_off", detail: agents[idx].name, ok: true)
+    }
+
     /// Replaces an agent's token and saves it where the CLI looks for it
     /// (~/.config/imessage-bridge/agents/<slug>.json, mode 600). For when the
     /// credential file was deleted; the old token stops working.

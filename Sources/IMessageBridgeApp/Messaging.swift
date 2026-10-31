@@ -51,19 +51,24 @@ enum Messaging {
     struct Confirmation {
         var approved = false
         var alwaysAllowRecipient = false
+        var stopAsking = false
     }
 
     /// `warnings` explain why the dialog appeared (new recipient, flagged
-    /// reads). `offerAllowRecipient` adds an "Always allow sending to…" box.
+    /// reads). `offerAllowRecipient` adds an "Always allow sending to…" box;
+    /// `offerStopAsking` adds "Don't ask again" for the agent's own
+    /// ask-before-every-send setting. Both only count if the user sends.
     static func confirmSend(agent: String, to: String, name: String?, service: String, text: String,
-                            warnings: [String] = [], offerAllowRecipient: Bool = false) -> Confirmation {
+                            warnings: [String] = [], offerAllowRecipient: Bool = false,
+                            offerStopAsking: Bool = false) -> Confirmation {
         guard !confirmationOpen else { return Confirmation() }
         confirmationOpen = true
         defer { confirmationOpen = false }
 
         NSApp.activate(ignoringOtherApps: true)
-        let alert = makeAlert(agent: agent, to: to, name: name, service: service, text: text,
-                              warnings: warnings, offerAllowRecipient: offerAllowRecipient)
+        let (alert, boxes) = makeAlert(agent: agent, to: to, name: name, service: service, text: text,
+                                       warnings: warnings, offerAllowRecipient: offerAllowRecipient,
+                                       offerStopAsking: offerStopAsking)
 
         let timer = Timer(timeInterval: 60, repeats: false) { _ in NSApp.abortModal() }
         RunLoop.main.add(timer, forMode: .modalPanel)
@@ -71,12 +76,19 @@ enum Messaging {
         timer.invalidate()
         let approved = response == .alertSecondButtonReturn
         return Confirmation(approved: approved,
-                            alwaysAllowRecipient: approved && offerAllowRecipient && alert.suppressionButton?.state == .on)
+                            alwaysAllowRecipient: approved && boxes.allowRecipient?.state == .on,
+                            stopAsking: approved && boxes.stopAsking?.state == .on)
+    }
+
+    struct Checkboxes {
+        var allowRecipient: NSButton?
+        var stopAsking: NSButton?
     }
 
     /// The confirmation alert, built separately so screenshot mode can render it.
     static func makeAlert(agent: String, to: String, name: String?, service: String, text: String,
-                          warnings: [String], offerAllowRecipient: Bool) -> NSAlert {
+                          warnings: [String], offerAllowRecipient: Bool,
+                          offerStopAsking: Bool = false) -> (NSAlert, Checkboxes) {
         let alert = NSAlert()
         alert.alertStyle = warnings.isEmpty ? .warning : .critical
         alert.messageText = "\(agent) wants to send a message"
@@ -87,11 +99,6 @@ enum Messaging {
         }
         info += "\n\nRead the full message below before sending."
         alert.informativeText = info
-        if offerAllowRecipient {
-            alert.showsSuppressionButton = true
-            alert.suppressionButton?.title = "Always allow sending to \(who)"
-            alert.suppressionButton?.state = .off
-        }
 
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 380, height: 160))
         scroll.hasVerticalScroller = true
@@ -104,13 +111,45 @@ enum Messaging {
         tv.autoresizingMask = [.width]
         tv.textContainerInset = NSSize(width: 4, height: 4)
         scroll.documentView = tv
-        alert.accessoryView = scroll
+
+        var boxes = Checkboxes()
+        var rows: [NSView] = [scroll]
+        if offerAllowRecipient {
+            let box = NSButton(checkboxWithTitle: "Always allow sending to \(who)", target: nil, action: nil)
+            boxes.allowRecipient = box
+            rows.append(box)
+        }
+        if offerStopAsking {
+            let box = NSButton(checkboxWithTitle: "Don't ask again for \(agent)'s messages", target: nil, action: nil)
+            box.toolTip = "Turns off \"Ask me before every send\" for \(agent). You can turn it back on from its page."
+            boxes.stopAsking = box
+            rows.append(box)
+            let note = NSTextField(wrappingLabelWithString:
+                "You'll still be asked before it sends to anyone not on your recipient list, or after it reads a message that was flagged.")
+            note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+            note.textColor = .secondaryLabelColor
+            note.preferredMaxLayoutWidth = 380
+            rows.append(note)
+        }
+        if rows.count == 1 {
+            alert.accessoryView = scroll
+        } else {
+            let stack = NSStackView(views: rows)
+            stack.orientation = .vertical
+            stack.alignment = .leading
+            stack.spacing = 8
+            stack.setCustomSpacing(12, after: scroll)
+            scroll.widthAnchor.constraint(equalToConstant: 380).isActive = true
+            scroll.heightAnchor.constraint(equalToConstant: 160).isActive = true
+            stack.frame = NSRect(origin: .zero, size: stack.fittingSize)
+            alert.accessoryView = stack
+        }
 
         let cancel = alert.addButton(withTitle: "Don't Send")
         cancel.keyEquivalent = "\r"
         let send = alert.addButton(withTitle: "Send")
         send.keyEquivalent = ""
-        return alert
+        return (alert, boxes)
     }
 
     static func send(to: String, text: String, service: String) throws {
