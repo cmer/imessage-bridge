@@ -10,11 +10,51 @@ struct IMessageBridgeApp: App {
         MenuBarExtra {
             MenuContent(state: state)
         } label: {
-            Image(systemName: state.pairings.contains(where: \.isPending)
+            MenuBarIcon(pending: state.pairings.contains(where: \.isPending))
+        }
+        .menuBarExtraStyle(.menu)
+    }
+}
+
+/// The Agent Bubble template icon from the app bundle, with a dot cut into the
+/// top-right corner while a pairing waits for approval. Falls back to SF Symbols
+/// when the resources are missing (e.g. `swift run` outside the .app bundle).
+struct MenuBarIcon: View {
+    let pending: Bool
+
+    private static let base: NSImage? = {
+        guard let image = Bundle.main.image(forResource: "AgentBubbleMenuTemplate") else { return nil }
+        image.size = NSSize(width: 18, height: 18)
+        image.isTemplate = true
+        return image
+    }()
+
+    private static let badged: NSImage? = base.map { base in
+        let image = NSImage(size: base.size, flipped: false) { rect in
+            base.draw(in: rect)
+            let center = NSPoint(x: rect.maxX - 3.5, y: rect.maxY - 4)
+            func circle(_ r: CGFloat) -> NSBezierPath {
+                NSBezierPath(ovalIn: NSRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2))
+            }
+            NSGraphicsContext.current?.compositingOperation = .clear
+            circle(4.5).fill()
+            NSGraphicsContext.current?.compositingOperation = .sourceOver
+            NSColor.black.setFill()
+            circle(3).fill()
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }
+
+    var body: some View {
+        if let image = pending ? Self.badged : Self.base {
+            Image(nsImage: image)
+        } else {
+            Image(systemName: pending
                   ? "bubble.left.and.exclamationmark.bubble.right.fill"
                   : "bubble.left.and.bubble.right")
         }
-        .menuBarExtraStyle(.menu)
     }
 }
 

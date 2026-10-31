@@ -22,6 +22,8 @@ echo "==> Assembling $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+cp Resources/AppIcon.icns Resources/AgentBubbleMenuTemplate.png Resources/AgentBubbleMenuTemplate@2x.png \
+    "$APP/Contents/Resources/"
 cp "$BIN/IMessageBridgeApp" "$APP/Contents/MacOS/$APP_NAME"
 cp "$BIN/imessage-bridge" "$APP/Contents/MacOS/imessage-bridge"
 printf 'APPL????' > "$APP/Contents/PkgInfo"

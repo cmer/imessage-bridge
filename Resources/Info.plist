@@ -8,6 +8,8 @@
 	<string>iMessage Bridge</string>
 	<key>CFBundleExecutable</key>
 	<string>iMessage Bridge</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>org.bloomworks.imessage-bridge</string>
 	<key>CFBundleInfoDictionaryVersion</key>
