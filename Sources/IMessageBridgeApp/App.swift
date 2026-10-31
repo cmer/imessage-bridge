@@ -121,7 +121,14 @@ final class WindowManager {
             w.setFrameAutosaveName("MainWindow")
             w.center()
             main = w
+            // Leave the Dock and the Cmd-Tab switcher again once it closes.
+            NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: w, queue: .main) { _ in
+                Task { @MainActor in NSApp.setActivationPolicy(.accessory) }
+            }
         }
+        // A menu bar app normally has no Dock icon; show one while the window
+        // is open so it can be reached with Cmd-Tab.
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         main?.makeKeyAndOrderFront(nil)
     }
@@ -138,7 +145,12 @@ final class WindowManager {
         w.styleMask.remove(.resizable)
         w.styleMask.remove(.miniaturizable)
         w.isReleasedWhenClosed = false
-        w.level = .floating
+        // Stay above every app's windows, follow the user across Spaces and
+        // over full-screen apps, and never hide when another app is active,
+        // so a pending request can't get lost behind other windows.
+        w.level = .modalPanel
+        w.hidesOnDeactivate = false
+        w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         w.center()
         pairingWindows[id] = w
         NSApp.activate(ignoringOtherApps: true)

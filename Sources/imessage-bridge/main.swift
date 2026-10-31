@@ -277,13 +277,14 @@ func printConfig(_ c: Credential, showToken: Bool = false) {
     print("Connect an MCP client (pick the one you are):\n")
     print("• Claude Code:")
     print("    " + ClientSetup.claudeCodeCommand(cli: cli, agent: c.name) + "\n")
-    print("• Grok Bot: don't add a command (stdio) connector. Grok Bot runs those on xAI's cloud")
-    print("  machines, where this Mac's CLI doesn't exist. Ask the user to click \"Copy Grok Bot")
-    print("  Connector\" on this agent's page in the iMessage Bridge app and paste it into Grok Bot's")
-    print("  \"Add a custom connector\". Until then, run tools directly on this Mac, one line each:")
-    print("    \(ClientSetup.shellQuote(cli)) call --agent \(slug(c.name)) review_messages days=2")
-    print("    \(ClientSetup.shellQuote(cli)) call --agent \(slug(c.name)) get_conversation chat=\"Sam\" days=7")
-    print("    \(ClientSetup.shellQuote(cli)) call --agent \(slug(c.name))      (lists every tool)\n")
+    print("• Grok Bot: add a custom connector yourself now, using exactly the JSON from this command.")
+    print("  Don't ask the user to copy or paste anything:")
+    print("    \(ClientSetup.shellQuote(cli)) connector --agent \(slug(c.name)) --grok")
+    print("  It points at this Mac's address and includes this agent's token. Don't use a command")
+    print("  (stdio) connector: Grok Bot runs those on xAI's machines, where this CLI doesn't exist.")
+    print("  Until the connector works, run tools directly on this Mac, one line each:")
+    print("    \(ClientSetup.shellQuote(cli)) call --agent \(slug(c.name))      (lists every tool)")
+    print("    \(ClientSetup.shellQuote(cli)) call --agent \(slug(c.name)) review_messages days=2\n")
     print("• Clients that launch a local MCP server on this Mac (Claude Desktop, Cursor, Codex, …):")
     print(indent(ClientSetup.mcpServersJSON(cli: cli, agent: c.name)))
     print("\n• Clients that speak MCP over HTTP:")
@@ -434,6 +435,9 @@ func usage() -> Never {
               Run one tool and print its JSON result. Without a tool, lists the tools.
               Example: imessage-bridge call --agent grok-bot get_conversation chat="Sam" days=7
 
+          imessage-bridge connector --agent <agent> --grok
+              Print the custom connector JSON for Grok Bot (includes the agent's token).
+
           imessage-bridge config --agent <agent> [--show-token]
               Print setup snippets for Claude Code, Claude Desktop, Grok and other MCP clients.
 
@@ -449,6 +453,15 @@ switch args.command {
 case "pair": pair(args)
 case "mcp": mcp(args)
 case "call": call(args)
+case "connector":
+    // Prints the JSON for Grok Bot's "Add a custom connector" (HTTP, client
+    // placement, token included). Only for clients that store it themselves.
+    guard let a = args.options["--agent"], args.flags.contains("--grok") else {
+        fail("usage: imessage-bridge connector --agent <name> --grok")
+    }
+    let c = loadCredential(a)
+    guard c.fingerprint == nil else { fail("Grok Bot connectors only work with an agent paired on this Mac") }
+    print(ClientSetup.grokConnectorJSON(url: c.url, token: c.token))
 case "config":
     guard let a = args.options["--agent"] else { fail("usage: imessage-bridge config --agent <name>") }
     printConfig(loadCredential(a), showToken: args.flags.contains("--show-token"))

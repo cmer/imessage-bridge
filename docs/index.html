@@ -184,7 +184,7 @@ imessage-bridge pair --name "Grok Bot" --read --send        # read and send</cod
         </picture>
         <figcaption>An agent's page, with the Connect buttons below its permissions.</figcaption>
       </figure>
-      <p><strong>Grok Bot:</strong> click <em>Copy Grok Bot Connector</em>, then in Grok Bot choose <em>Add a custom connector</em> and paste. Don't let Grok Bot add a command-style connector on its own: Grok runs those on xAI's servers, which can't reach your Mac. If the connector doesn't work, delete it; Grok Bot can still use the bridge by running one-line commands you approve, such as <code>imessage-bridge call --agent grok-bot review_messages days=2</code>.</p>
+      <p><strong>Grok Bot:</strong> adds its connector by itself right after pairing, so there's nothing to paste. If it didn't, click <em>Copy Grok Bot Connector</em>, then in Grok Bot choose <em>Add a custom connector</em> and paste. If the connector shows an error, delete it; Grok Bot can still use the bridge by running one-line commands you approve, such as <code>imessage-bridge call --agent grok-bot review_messages days=2</code>.</p>
       <p><strong>Claude Code:</strong> click <em>Copy Claude Code Command</em> and run it in Terminal. It looks like this:</p>
       <pre><code>claude mcp add imessage --scope user -- ~/.local/bin/imessage-bridge mcp --agent claude-code</code></pre>
       <p><strong>Claude Desktop, Cursor and other MCP clients</strong> that launch a local server: run <code>imessage-bridge config --agent &lt;name&gt;</code> for the JSON to paste.</p>

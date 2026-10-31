@@ -98,7 +98,7 @@ struct SetupView: View {
                - Read-only: \(q) pair --name "<your name>" --read
                - Read and send: \(q) pair --name "<your name>" --read --send
                The command waits while I approve it on my Mac. Tell me the 6-digit code it prints so I can check it matches.
-            3. Once approved, follow the connection instructions the command prints. If you are Grok Bot, don't add a connector yourself (yours run in the cloud, not on this Mac): ask me to click "Copy Grok Bot Connector" in the app and paste it into Add a custom connector.
+            3. Once approved, follow the connection instructions the command prints. If you are Grok Bot, add the custom connector yourself with the JSON from the `connector --grok` command it shows; don't ask me to copy or paste anything.
             4. Run \(q) status --agent "<your name>" and tell me which permissions you ended up with.
             """
     }
@@ -199,7 +199,7 @@ struct ConnectSection: View {
             }
             VStack(alignment: .leading, spacing: 8) {
                 Text("Grok Bot").font(.headline)
-                Text("Copy the connector, then in Grok Bot choose **Add a custom connector** and paste. Grok Bot then calls these tools directly instead of asking to run commands. The connector includes this agent's token, which Grok stores in your xAI account; it only works from this Mac.")
+                Text("Grok Bot adds this connector itself when it pairs. If it didn't, copy it, then in Grok Bot choose **Add a custom connector** and paste. Grok Bot then calls these tools directly instead of asking to run commands. The connector includes this agent's token, which Grok stores in your xAI account; it only works from this Mac.")
                     .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 HStack {
                     Button(copied.value == "grok" ? "Copied" : "Copy Grok Bot Connector") {

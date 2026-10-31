@@ -13,7 +13,9 @@ enum AuthResult {
 @MainActor
 final class AppState: ObservableObject {
     static let shared = AppState()
-    nonisolated static let version = "0.1.0"
+    /// From Info.plist, which scripts/release.sh sets.
+    nonisolated static let version =
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
     static let maxPendingPairings = 3
     static let pairingTTL: TimeInterval = 600
     nonisolated static let sendsPerHour = 30

@@ -56,10 +56,15 @@ After approval, `pair` prints setup snippets. For Claude Code:
 claude mcp add imessage --scope user -- ~/.local/bin/imessage-bridge mcp --agent claude-code
 ```
 
-If you are Grok Bot, don't add a command (stdio) connector: Grok Bot runs those on
-xAI's cloud machines, where this Mac's CLI doesn't exist. Ask the user to click
-**Copy Grok Bot Connector** on your page in the iMessage Bridge app and paste it into
-**Add a custom connector**. Until that works, call tools directly, one command each:
+If you are Grok Bot, add the custom connector yourself, with exactly the JSON this
+prints (don't ask the user to copy or paste anything):
+
+```sh
+imessage-bridge connector --agent grok-bot --grok
+```
+
+Don't add a command (stdio) connector: Grok Bot runs those on xAI's machines, where
+this Mac's CLI doesn't exist. Until the connector works, call tools directly:
 
 ```sh
 imessage-bridge call --agent grok-bot                      # list the tools you can use
