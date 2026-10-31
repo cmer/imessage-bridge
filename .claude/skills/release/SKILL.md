@@ -7,8 +7,10 @@ description: Cut a tagged, signed, notarized GitHub release of iMessage Bridge w
 
 `scripts/release.sh <version> [--draft]` does the work: it bumps the version in
 `Resources/Info.plist`, runs the tests, builds and signs with Developer ID,
-notarizes and staples, commits "Release vX.Y.Z", tags, pushes, and creates the
-GitHub release with the zipped app and its SHA-256. Your job is to pick the
+notarizes and staples the app, packs it into a notarized DMG, commits "Release
+vX.Y.Z", tags, pushes, creates the GitHub release with the DMG and its SHA-256,
+and publishes the Homebrew cask to `cmer/homebrew-tap` (from
+`packaging/homebrew/imessage-bridge.rb`). Your job is to pick the
 version, get the repo ready, run it, and report.
 
 ## 1. Pick the version
@@ -31,6 +33,7 @@ what you can:
   `git status --short` and ask whether to commit them as part of the release.
   Don't commit or push without that yes.
 - `gh auth status` succeeds. If not, ask the user to run `! gh auth login`.
+- `gh` can push to `cmer/homebrew-tap` (the script checks this too).
 - Notary credentials exist: `xcrun notarytool history --keychain-profile imessage-bridge`.
   If not, ask the user to run
   `! xcrun notarytool store-credentials imessage-bridge --apple-id <Apple ID> --team-id PMQU892978`
@@ -45,16 +48,19 @@ version with the user first (once is enough, including when they named it).
 scripts/release.sh <version>            # add --draft to review on GitHub first
 ```
 
-Run it in the background with a long timeout: notarization usually takes a few
-minutes. Don't pass `--force`-style workarounds or skip notarization.
+Run it in the background with a long timeout: it notarizes twice (app, then
+DMG), usually a few minutes each. Don't pass `--force`-style workarounds or skip notarization.
 
 ## 4. Afterwards
 
 - Report the release URL the script prints, the version and the SHA-256.
+- A `--draft` or prerelease doesn't update the cask. Once the user publishes the
+  draft on GitHub, run `scripts/release.sh --cask-only <version>`.
 - Reinstall locally so /Applications matches the release: `scripts/install.sh`.
 - If the script failed before "Tagging", nothing was committed or pushed and
   Info.plist was restored; fix the cause and run it again. If it failed after
   the push (at "Creating GitHub release"), the tag already exists on GitHub:
-  finish with `gh release create v<version> build/dist/*.zip build/dist/*.sha256
+  finish with `gh release create v<version> build/dist/*.dmg build/dist/*.sha256
   --verify-tag --title "iMessage Bridge <version>" --notes-file build/dist/notes.md`
-  instead of rerunning the script.
+  instead of rerunning the script, then `scripts/release.sh --cask-only <version>`.
+  If only the cask step failed, run `scripts/release.sh --cask-only <version>`.

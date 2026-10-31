@@ -21,7 +21,7 @@
 
   <ul class="toc">
     <li><a href="#how">How it works</a></li>
-    <li><a href="#install">Installing and signing</a></li>
+    <li><a href="#install">Building from source and signing</a></li>
     <li><a href="#pair">Pairing by hand</a></li>
     <li><a href="#connect">Connecting MCP clients</a></li>
     <li><a href="#permissions">Agent permissions</a></li>
@@ -37,8 +37,12 @@
   <p>The app runs an <a href="https://modelcontextprotocol.io">MCP</a> server at <code>127.0.0.1:7542/mcp</code>. It reads <code>~/Library/Messages/chat.db</code> and your contacts read-only, and sends through Messages.app with AppleScript. Full Disk Access is granted to the app alone, so agents only see what the app hands them.</p>
   <p>Agents connect either over HTTP with a bearer token, or through the <code>imessage-bridge mcp</code> command, a stdio MCP server that forwards requests to the app and adds the agent's token.</p>
 
-  <h2 id="install">Installing and signing</h2>
-  <p>You need the Xcode Command Line Tools (<code>xcode-select --install</code>); Xcode itself isn't needed. <code>./scripts/install.sh</code> builds and signs the app, installs it to <code>/Applications/iMessage Bridge.app</code>, links the CLI at <code>~/.local/bin/imessage-bridge</code> and opens the app.</p>
+  <h2 id="install">Building from source and signing</h2>
+  <p>The <a href="./#install">quick install</a> uses a signed, notarized release. To build it yourself, you need the Xcode Command Line Tools (<code>xcode-select --install</code>); Xcode itself isn't needed.</p>
+  <pre><code>git clone https://github.com/cmer/imessage-bridge.git
+cd imessage-bridge
+./scripts/install.sh</code></pre>
+  <p><code>install.sh</code> builds and signs the app, installs it to <code>/Applications/iMessage Bridge.app</code>, links the CLI at <code>~/.local/bin/imessage-bridge</code> and opens the app.</p>
   <p><code>scripts/build.sh</code> signs with the first <em>Developer ID Application</em> identity in your keychain, or <code>$SIGN_IDENTITY</code> if set, and otherwise signs ad hoc. With a stable Developer ID, Full Disk Access survives rebuilds. With ad hoc signing, you have to grant it again after every rebuild.</p>
   <p>To have an agent do the whole install, point it at <a href="https://github.com/cmer/imessage-bridge/blob/main/AGENT_SETUP.md">AGENT_SETUP.md</a>.</p>
 
@@ -142,7 +146,8 @@ imessage-bridge forget --agent &lt;agent&gt;</code></pre>
     <li>App settings and agents: <code>~/Library/Application Support/iMessage Bridge/</code></li>
     <li>API keys: the Keychain</li>
   </ul>
-  <p>To update, run <code>git pull &amp;&amp; ./scripts/install.sh</code> in the repository. To uninstall, quit the app from the menu bar and delete <code>/Applications/iMessage Bridge.app</code>, <code>~/.local/bin/imessage-bridge</code>, <code>~/.config/imessage-bridge</code> and <code>~/Library/Application Support/iMessage Bridge</code>.</p>
+  <p>To update, download the latest release and replace the app, or run <code>brew upgrade --cask imessage-bridge</code>. From source, run <code>git pull &amp;&amp; ./scripts/install.sh</code> in the repository.</p>
+  <p>To uninstall, quit the app from the menu bar and delete <code>/Applications/iMessage Bridge.app</code> (or run <code>brew uninstall --cask imessage-bridge</code>), then <code>~/.config/imessage-bridge</code>, <code>~/Library/Application Support/iMessage Bridge</code> and, if you built from source, <code>~/.local/bin/imessage-bridge</code>.</p>
 
   <h2 id="security">Security notes</h2>
   <ul>

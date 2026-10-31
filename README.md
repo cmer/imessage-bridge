@@ -23,16 +23,18 @@ Messages database directly.
 
 Requires macOS 14 or later. Takes about five minutes.
 
-1. **Install the app.** In Terminal:
+1. **Install the app.** Either way works:
 
-   ```bash
-   xcode-select --install          # skip if already installed
-   git clone https://github.com/cmer/imessage-bridge.git
-   cd imessage-bridge
-   ./scripts/install.sh
-   ```
+   - **Download:** get the `.dmg` from the
+     [latest release](https://github.com/cmer/imessage-bridge/releases/latest), open it
+     and drag **iMessage Bridge** to Applications.
+   - **Homebrew:**
 
-   The app opens and lives in your menu bar (the two speech bubbles).
+     ```bash
+     brew install --cask cmer/tap/imessage-bridge
+     ```
+
+   Open the app. It lives in your menu bar (the two speech bubbles).
 
 2. **Grant Full Disk Access.** On the Setup page, click *Open Full Disk Access Settings*
    and turn on **iMessage Bridge**. If you want agents to send messages, also click
@@ -187,6 +189,20 @@ imessage-bridge status [--agent <agent>]
 imessage-bridge agents | forget --agent <agent>
 ```
 
+### Building from source
+
+You need the Xcode Command Line Tools (`xcode-select --install`); Xcode itself isn't
+needed.
+
+```bash
+git clone https://github.com/cmer/imessage-bridge.git
+cd imessage-bridge
+./scripts/install.sh
+```
+
+`install.sh` builds and signs the app, installs it to `/Applications/iMessage Bridge.app`,
+links the CLI at `~/.local/bin/imessage-bridge` and opens the app.
+
 ### Signing
 
 `scripts/build.sh` signs with the first *Developer ID Application* identity in your
@@ -200,9 +216,13 @@ Credentials are stored in `~/.config/imessage-bridge/agents/<agent>.json` (mode 
 App settings and agents are stored in `~/Library/Application Support/iMessage Bridge/`.
 API keys are stored in the Keychain.
 
-To update, run `git pull && ./scripts/install.sh`. To uninstall, quit the app from the
-menu bar and delete `/Applications/iMessage Bridge.app`, `~/.local/bin/imessage-bridge`,
-`~/.config/imessage-bridge` and `~/Library/Application Support/iMessage Bridge`.
+To update, download the latest release and replace the app, or run
+`brew upgrade --cask imessage-bridge`. From source, run `git pull && ./scripts/install.sh`.
+
+To uninstall, quit the app from the menu bar and delete `/Applications/iMessage Bridge.app`
+(or run `brew uninstall --cask imessage-bridge`), then `~/.config/imessage-bridge`,
+`~/Library/Application Support/iMessage Bridge` and, if you built from source,
+`~/.local/bin/imessage-bridge`.
 
 ### Security notes
 

@@ -7,17 +7,32 @@ them. Tell the user exactly what to click and wait for them.
 
 ## 1. Install (skip if `imessage-bridge status` already works)
 
+If Homebrew is installed (`command -v brew` succeeds), use it:
+
 ```bash
-cd <path to this repository>
-./scripts/install.sh
+brew install --cask cmer/tap/imessage-bridge
+open -a "iMessage Bridge"
 ```
 
-This builds the app, installs it to `/Applications/iMessage Bridge.app`, links the
-CLI at `~/.local/bin/imessage-bridge`, and launches it. If `~/.local/bin` isn't on
-PATH, use the full path `~/.local/bin/imessage-bridge` everywhere below.
+This puts the app in `/Applications` and the `imessage-bridge` command on PATH.
 
-Requires Xcode Command Line Tools (`xcode-select --install`). Xcode itself is
-not needed.
+Without Homebrew, install from the latest GitHub release's disk image:
+
+```bash
+url="$(curl -fsSL https://api.github.com/repos/cmer/imessage-bridge/releases/latest \
+  | grep -o '"browser_download_url": *"[^"]*\.dmg"' | cut -d'"' -f4)"
+curl -fL -o /tmp/iMessage-Bridge.dmg "$url"
+mnt="$(hdiutil attach -nobrowse -readonly /tmp/iMessage-Bridge.dmg | awk -F'\t' '/\/Volumes\//{print $NF}')"
+ditto "$mnt/iMessage Bridge.app" "/Applications/iMessage Bridge.app"
+hdiutil detach -quiet "$mnt"
+rm /tmp/iMessage-Bridge.dmg
+mkdir -p ~/.local/bin
+ln -sf "/Applications/iMessage Bridge.app/Contents/MacOS/imessage-bridge" ~/.local/bin/imessage-bridge
+open -a "iMessage Bridge"
+```
+
+With the disk image install, if `~/.local/bin` isn't on PATH, use the full path
+`~/.local/bin/imessage-bridge` everywhere below.
 
 ## 2. Ask the user to grant Full Disk Access
 
@@ -50,10 +65,11 @@ window. The user may change the permissions before approving.
 
 ## 4. Connect your MCP client
 
-After approval, `pair` prints setup snippets. For Claude Code:
+After approval, `pair` prints setup snippets with the right path to the CLI; use
+them as printed. For Claude Code it looks like:
 
 ```bash
-claude mcp add imessage --scope user -- ~/.local/bin/imessage-bridge mcp --agent claude-code
+claude mcp add imessage --scope user -- <CLI path> mcp --agent claude-code
 ```
 
 If you are Grok Bot, add the custom connector yourself, with exactly the JSON this
@@ -72,8 +88,8 @@ imessage-bridge call --agent grok-bot review_messages days=2
 imessage-bridge call --agent grok-bot get_conversation chat="Sam" days=7
 ```
 
-For other clients, add a stdio MCP server with command
-`~/.local/bin/imessage-bridge` and args `["mcp", "--agent", "<agent>"]`.
+For other clients, add a stdio MCP server with the CLI path from those snippets
+as the command and args `["mcp", "--agent", "<agent>"]`.
 Print the snippets again any time with `imessage-bridge config --agent <name>`.
 
 ## 5. Sending (only if the agent has send permission)
