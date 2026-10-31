@@ -33,15 +33,69 @@ public struct ContactBook: Sendable {
         }
     }
 
-    /// Emails lowercase; phone numbers reduce to their last 10 digits.
-    /// Short codes and unrecognized strings return "".
+    /// The key handles are compared by. Emails lowercase; phone numbers become their full
+    /// international digits, country code included ("+1 (555) 123-4567" → "15551234567"),
+    /// so numbers in different countries never share a key. A number written without a
+    /// country code is read as this Mac's region would dial it. Short codes, group chat ids
+    /// and anything else return "", which matches nothing.
     public static func normalize(_ handle: String) -> String {
+        normalize(handle, region: currentRegion)
+    }
+
+    static let currentRegion = Locale.current.region?.identifier
+
+    public static func normalize(_ handle: String, region: String?) -> String {
         let s = handle.trimmingCharacters(in: .whitespacesAndNewlines)
         if s.isEmpty { return "" }
         if s.contains("@") { return s.lowercased() }
-        let digits = s.filter(\.isASCII).filter(\.isNumber)
-        return digits.count >= 10 ? String(digits.suffix(10)) : ""
+        if s.contains(where: \.isLetter) { return "" }
+        let digits = Substring(s.filter { $0.isASCII && $0.isNumber })
+        let minDigits = 7  // shorter than any full number; short codes stay out
+        if s.hasPrefix("+") { return digits.count >= minDigits ? String(digits) : "" }
+
+        // No country code: interpret it with the region's dialing plan, or give up.
+        guard let region, let plan = dialPlans[region] else { return "" }
+        if digits.hasPrefix(plan.exit) {
+            let intl = digits.dropFirst(plan.exit.count)
+            return intl.count >= minDigits ? String(intl) : ""
+        }
+        if plan.code == "1" {
+            let n = digits.count == 11 && digits.hasPrefix("1") ? digits.dropFirst() : digits
+            guard n.count == 10, let first = n.first, first != "0", first != "1" else { return "" }
+            return "1" + n
+        }
+        let national = !plan.trunk.isEmpty && digits.hasPrefix(plan.trunk) ? digits.dropFirst(plan.trunk.count) : digits
+        return national.count >= minDigits ? plan.code + national : ""
     }
+
+    private struct DialPlan {
+        let code: String   // country calling code
+        let trunk: String  // domestic prefix dropped before the code is added ("0" in 07700 900123)
+        let exit: String   // prefix for dialing abroad
+    }
+
+    /// Regions whose dialing plan is known. A number without a country code from any other
+    /// region doesn't normalize, so it matches nothing rather than the wrong country.
+    private static let dialPlans: [String: DialPlan] = {
+        var plans: [String: DialPlan] = [:]
+        let nanp = "US CA PR VI GU AS MP BS BB AI AG VG KY BM GD TC MS SX LC DM VC DO TT KN JM"
+        for r in nanp.split(separator: " ") { plans[String(r)] = DialPlan(code: "1", trunk: "", exit: "011") }
+        // region:code:trunk
+        let others = """
+            GB:44:0 IE:353:0 FR:33:0 DE:49:0 AT:43:0 CH:41:0 NL:31:0 BE:32:0 LU:352: \
+            IT:39: SM:378: VA:39: ES:34: PT:351: GR:30: DK:45: NO:47: SE:46:0 FI:358:0 IS:354: \
+            PL:48: CZ:420: SK:421:0 HU:36:06 RO:40:0 BG:359:0 HR:385:0 SI:386:0 RS:381:0 \
+            UA:380:0 RU:7:8 KZ:7:8 BY:375:8 LV:371: EE:372: TR:90:0 IL:972:0 AE:971:0 SA:966:0 \
+            EG:20:0 ZA:27:0 NG:234:0 KE:254:0 MA:212:0 IN:91:0 PK:92:0 BD:880:0 CN:86:0 \
+            HK:852: MO:853: TW:886:0 JP:81:0 KR:82:0 SG:65: MY:60:0 TH:66:0 VN:84:0 PH:63:0 \
+            ID:62:0 AU:61:0 NZ:64:0 MX:52: BR:55:0 AR:54:0
+            """
+        for entry in others.split(separator: " ") {
+            let f = entry.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+            plans[f[0]] = DialPlan(code: f[1], trunk: f[2], exit: "00")
+        }
+        return plans
+    }()
 
     public func name(for handle: String) -> String? {
         let k = ContactBook.normalize(handle)

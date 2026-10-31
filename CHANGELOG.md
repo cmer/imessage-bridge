@@ -6,6 +6,13 @@ and uses it as the GitHub release notes.
 
 ## Unreleased
 
+### Fixed
+- A phone number in another country no longer passes for an allowed recipient, a contact
+  or one of an agent's selected chats just because its last 10 digits match (for example
+  +33 6 12 34 56 78 and +1 361-234-5678).
+- Contacts saved without a country code are now read using your Mac's region, so local
+  numbers like 06 12 34 56 78 in France show the contact's name.
+
 ## 0.9.1 - 2026-10-31
 
 ### Changed

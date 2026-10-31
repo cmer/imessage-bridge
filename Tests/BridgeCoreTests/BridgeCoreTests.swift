@@ -99,9 +99,42 @@ import Testing
 
 @Suite struct ContactTests {
     @Test func normalize() {
-        #expect(ContactBook.normalize("+1 (555) 123-4567") == "5551234567")
+        #expect(ContactBook.normalize("+1 (555) 123-4567") == "15551234567")
         #expect(ContactBook.normalize(" Alex@Example.com ") == "alex@example.com")
         #expect(ContactBook.normalize("22395") == "")
+        #expect(ContactBook.normalize("+33 6 12 34 56 78") == "33612345678")
+        #expect(ContactBook.normalize("chat123456789012345678") == "")
+    }
+
+    @Test func numbersInDifferentCountriesNeverCollide() {
+        for region in ["US", "FR", "GB", nil] {
+            let fr = ContactBook.normalize("+33 612345678", region: region)
+            #expect(fr != ContactBook.normalize("+1 361-234-5678", region: region))
+            #expect(fr != ContactBook.normalize("361-234-5678", region: region))
+        }
+    }
+
+    @Test func localNumbersUseTheRegion() {
+        // North America: with or without the leading 1.
+        #expect(ContactBook.normalize("(555) 123-4567", region: "US") == "15551234567")
+        #expect(ContactBook.normalize("1-555-123-4567", region: "CA") == "15551234567")
+        #expect(ContactBook.normalize("011 33 6 12 34 56 78", region: "US") == "33612345678")
+        #expect(ContactBook.normalize("055 123 4567", region: "US") == "")
+        // Trunk prefix dropped before the country code.
+        #expect(ContactBook.normalize("06 12 34 56 78", region: "FR") == "33612345678")
+        #expect(ContactBook.normalize("07700 900123", region: "GB") == "447700900123")
+        #expect(ContactBook.normalize("0033 6 12 34 56 78", region: "GB") == "33612345678")
+        // Italy keeps the leading 0.
+        #expect(ContactBook.normalize("06 1234 5678", region: "IT") == "390612345678")
+        // A local number means a different number in another region.
+        #expect(ContactBook.normalize("06 12 34 56 78", region: "US") == "")
+        // Unknown region: only numbers with a country code normalize.
+        #expect(ContactBook.normalize("06 12 34 56 78", region: nil) == "")
+        #expect(ContactBook.normalize("06 12 34 56 78", region: "ZZ") == "")
+        #expect(ContactBook.normalize("+33 6 12 34 56 78", region: nil) == "33612345678")
+        // Short codes never normalize.
+        #expect(ContactBook.normalize("22395", region: "US") == "")
+        #expect(ContactBook.normalize("36179", region: "FR") == "")
     }
 
     @Test func mergesAndSearches() {
@@ -111,15 +144,21 @@ import Testing
             ContactEntry(name: "Bea Other", handles: ["+15559876543"]),
         ])
         #expect(book.entries.count == 2)
-        #expect(book.name(for: "555-123-4567") == "Alex Example")
+        #expect(book.name(for: "+1 555-123-4567") == "Alex Example")
+        #expect(book.name(for: "+44 555 123 4567") == nil)
         #expect(book.search("alex").first?.handles.count == 2)
-        #expect(book.search("5559876543").first?.name == "Bea Other")
+        #expect(book.search("+1 (555) 987-6543").first?.name == "Bea Other")
     }
 
     @Test func scopeLimitsSendTargets() {
         let svc = MessageService(dbPath: "/nonexistent")
         let scope = ReadScope(allowedChats: ["+15551234567"], redact: true)
-        #expect((try? svc.checkSendAllowed(to: "(555) 123-4567", scope: scope)) != nil)
+        #expect((try? svc.checkSendAllowed(to: "+1 (555) 123-4567", scope: scope)) != nil)
+        #expect(throws: BridgeError.self) { try svc.checkSendAllowed(to: "+44 5551234567", scope: scope) }
+        let abroad = ReadScope(allowedChats: ["+33612345678"], redact: true)
+        #expect(throws: BridgeError.self) { try svc.checkSendAllowed(to: "+13612345678", scope: abroad) }
+        let group = ReadScope(allowedChats: ["chat123456789012345678"], redact: true)
+        #expect(throws: BridgeError.self) { try svc.checkSendAllowed(to: "+19012345678", scope: group) }
         #expect(throws: BridgeError.self) { try svc.checkSendAllowed(to: "+15559876543", scope: scope) }
         #expect((try? svc.checkSendAllowed(to: "+15559876543", scope: ReadScope(allowedChats: nil, redact: true))) != nil)
     }
