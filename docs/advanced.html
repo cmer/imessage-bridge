@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Advanced setup · iMessage Bridge</title>
+<meta name="description" content="Manual setup, MCP client configuration, safety settings, network access and CLI reference for iMessage Bridge.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💬</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <nav>
+    <a class="home" href="./">iMessage Bridge</a>
+    <a href="advanced.html" aria-current="page">Advanced setup</a>
+    <a href="https://github.com/cmer/imessage-bridge">GitHub</a>
+  </nav>
+
+  <h1>Advanced setup</h1>
+  <p class="lede">Everything the <a href="./">quick install</a> leaves out: how it works, manual pairing, client configuration, safety settings, network access and the CLI.</p>
+
+  <ul class="toc">
+    <li><a href="#how">How it works</a></li>
+    <li><a href="#install">Installing and signing</a></li>
+    <li><a href="#pair">Pairing by hand</a></li>
+    <li><a href="#connect">Connecting MCP clients</a></li>
+    <li><a href="#permissions">Agent permissions</a></li>
+    <li><a href="#tools">MCP tools</a></li>
+    <li><a href="#safety">Safety settings</a></li>
+    <li><a href="#network">Network access</a></li>
+    <li><a href="#cli">CLI reference</a></li>
+    <li><a href="#files">Files, updating, uninstalling</a></li>
+    <li><a href="#security">Security notes</a></li>
+  </ul>
+
+  <h2 id="how">How it works</h2>
+  <p>The app runs an <a href="https://modelcontextprotocol.io">MCP</a> server at <code>127.0.0.1:7542/mcp</code>. It reads <code>~/Library/Messages/chat.db</code> and your contacts read-only, and sends through Messages.app with AppleScript. Full Disk Access is granted to the app alone, so agents only see what the app hands them.</p>
+  <p>Agents connect either over HTTP with a bearer token, or through the <code>imessage-bridge mcp</code> command, a stdio MCP server that forwards requests to the app and adds the agent's token.</p>
+
+  <h2 id="install">Installing and signing</h2>
+  <p>You need the Xcode Command Line Tools (<code>xcode-select --install</code>); Xcode itself isn't needed. <code>./scripts/install.sh</code> builds and signs the app, installs it to <code>/Applications/iMessage Bridge.app</code>, links the CLI at <code>~/.local/bin/imessage-bridge</code> and opens the app.</p>
+  <p><code>scripts/build.sh</code> signs with the first <em>Developer ID Application</em> identity in your keychain, or <code>$SIGN_IDENTITY</code> if set, and otherwise signs ad hoc. With a stable Developer ID, Full Disk Access survives rebuilds. With ad hoc signing, you have to grant it again after every rebuild.</p>
+  <p>To have an agent do the whole install, point it at <a href="https://github.com/cmer/imessage-bridge/blob/main/AGENT_SETUP.md">AGENT_SETUP.md</a>.</p>
+
+  <h2 id="pair">Pairing by hand</h2>
+  <p>Instead of pasting the prompt into an agent, you can pair from Terminal:</p>
+  <pre><code>imessage-bridge pair --name "Claude Code" --read            # read only
+imessage-bridge pair --name "Grok Bot" --read --send        # read and send</code></pre>
+  <p>The command waits while an approval window on the Mac shows a 6-digit code. Check the code, adjust permissions if you like, and approve. The agent gets a random token; the app stores only its SHA-256 hash. When pairing finishes, the command prints setup snippets for common clients.</p>
+
+  <h2 id="connect">Connecting MCP clients</h2>
+  <p>Each agent's page in the app has buttons to copy its setup. You can also print it any time with <code>imessage-bridge config --agent &lt;name&gt;</code>.</p>
+
+  <h3>Claude Code</h3>
+  <pre><code>claude mcp add imessage --scope user -- ~/.local/bin/imessage-bridge mcp --agent claude-code</code></pre>
+
+  <h3>Claude Desktop, Cursor and other local MCP clients</h3>
+  <p>Add a stdio MCP server with command <code>~/.local/bin/imessage-bridge</code> and args <code>["mcp", "--agent", "&lt;name&gt;"]</code>. <code>imessage-bridge config --agent &lt;name&gt;</code> prints the JSON to paste.</p>
+
+  <h3>Grok Bot</h3>
+  <p>Grok Bot adds its own custom connector right after pairing, using the JSON from <code>imessage-bridge connector --agent grok-bot --grok</code>, so there's nothing to paste. If it didn't, click <em>Copy Grok Bot Connector</em> on the agent's page, then in Grok Bot choose <em>Add a custom connector</em> and paste.</p>
+  <p>Don't use a command-style (stdio) connector: Grok runs those on xAI's servers, which can't reach your Mac. If the connector shows an error, delete it. Grok Bot can still use the bridge by running one-line commands you approve:</p>
+  <pre><code>imessage-bridge call --agent grok-bot                      # list available tools
+imessage-bridge call --agent grok-bot review_messages days=2
+imessage-bridge call --agent grok-bot get_conversation chat="Sam" days=7</code></pre>
+
+  <h2 id="permissions">Agent permissions</h2>
+  <p>Open an agent's page in the sidebar to change what it can do:</p>
+  <ul>
+    <li><strong>Read</strong> and <strong>send</strong>, granted separately.</li>
+    <li><strong>Ask me before every send</strong>: a native dialog shows the full message, with Don't Send as the default. On unless you turn it off.</li>
+    <li><strong>Hide verification codes</strong>, card numbers and SSNs from message text.</li>
+    <li><strong>Only selected conversations</strong>: every tool, including contact lookup and sending, is limited to the chats you pick.</li>
+    <li><strong>Allow connections from other computers</strong> (see <a href="#network">Network access</a>).</li>
+  </ul>
+  <p>Sends are capped at 30 per hour per agent. Revoking an agent invalidates its token immediately.</p>
+  <figure class="shot">
+    <picture>
+      <source srcset="images/agent-dark.png" media="(prefers-color-scheme: dark)">
+      <img src="images/agent-light.png" alt="Agent page with permissions, conversations and Connect section" loading="lazy">
+    </picture>
+    <figcaption>An agent's page, with the Connect buttons below its permissions.</figcaption>
+  </figure>
+
+  <h2 id="tools">MCP tools</h2>
+  <p>Agents only see the tools they're allowed to use.</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Tool</th><th>Permission</th><th>What it does</th></tr>
+    <tr><td><code>review_messages</code></td><td>read</td><td>Sorts recent threads into needs reply, low priority and automated</td></tr>
+    <tr><td><code>list_chats</code></td><td>read</td><td>Recent conversations with participants and contact names</td></tr>
+    <tr><td><code>get_conversation</code></td><td>read</td><td>One conversation by name, phone, email, group name or chat ID</td></tr>
+    <tr><td><code>search_messages</code></td><td>read</td><td>Text search, optionally within one conversation</td></tr>
+    <tr><td><code>response_stats</code></td><td>read</td><td>Your reply times in a conversation</td></tr>
+    <tr><td><code>lookup_contact</code></td><td>read</td><td>Phone numbers and emails for a contact</td></tr>
+    <tr><td><code>send_message</code></td><td>send</td><td>Send to one phone number or email (not groups)</td></tr>
+  </table>
+  </div>
+
+  <h2 id="safety">Safety settings</h2>
+  <p>The Safety page has two independent layers against prompt injection, where someone texts you instructions hoping your agent follows them.</p>
+
+  <h3>Allowed recipients</h3>
+  <p>On by default. Sending to anyone not on the list always shows the confirmation dialog, even for agents allowed to send without asking. The dialog has an "Always allow sending to…" checkbox, and an optional toggle allows everyone in your contacts. This check is deterministic: no message wording can get past it.</p>
+
+  <h3>Prompt injection detection</h3>
+  <p>Incoming messages are checked with TypeSafe's Jev model before an agent sees them. It needs an API key from <a href="https://typesafe.ai">TypeSafe</a>, or from <a href="https://openrouter.ai">OpenRouter</a>, which also serves Jev. Keys are stored in the Keychain.</p>
+  <ul>
+    <li>By default only senders not in your contacts are checked. Turn on <em>Also check messages from people in my contacts</em> to check everything.</li>
+    <li>A flagged message is hidden from the agent, or shown with a warning if you prefer. The agent that read it must get your confirmation for every send over the next 30 minutes.</li>
+    <li>Sensitivity and model are adjustable. With OpenRouter, you can require providers that don't store or train on messages.</li>
+    <li>Local checks run first and catch blatant cases and hidden Unicode "tag" text without an API call.</li>
+    <li><em>Test With Sample Messages</em> runs one normal message and two sample attacks through the check, so you can confirm your key works.</li>
+  </ul>
+  <p>The Jev prompt (<a href="https://github.com/cmer/imessage-bridge/blob/main/Sources/BridgeCore/JevPrompt.swift">JevPrompt.swift</a>) is built around Datadog Security Labs' finding that a fake policy embedded in a message can flip Jev's verdict. Definitions live only in trusted instructions, any attempt to label or redefine the check counts as evidence of an attack, and a separate question looks only for such attempts. Detection still isn't perfect: treat it as an alarm and rely on send confirmations and the recipient list.</p>
+  <figure class="shot">
+    <picture>
+      <source srcset="images/safety-dark.png" media="(prefers-color-scheme: dark)">
+      <img src="images/safety-light.png" alt="Safety page with allowed recipients and prompt injection detection settings" loading="lazy">
+    </picture>
+  </figure>
+
+  <h2 id="network">Network access</h2>
+  <p>Off by default. When you turn it on (Network page), the app also listens on port 7543 with TLS, using a self-signed certificate generated on first use. Clients pin its SHA-256 fingerprint when pairing, so no certificate authority is involved:</p>
+  <pre><code>imessage-bridge pair --name "Laptop Claude" --read \
+  --url https://your-mac.local:7543 --fingerprint C2:73:…:17:77</code></pre>
+  <p>The agent also needs "Allow connections from other computers" turned on, so a token from a local-only agent is useless from another machine. Prefer Tailscale over opening the port on shared Wi-Fi.</p>
+
+  <h2 id="cli">CLI reference</h2>
+  <pre><code>imessage-bridge pair --name &lt;agent&gt; [--read] [--send] [--url URL --fingerprint FP]
+imessage-bridge mcp --agent &lt;agent&gt;                        # stdio MCP server for clients
+imessage-bridge call --agent &lt;agent&gt; [tool key=value …]    # one tool call, no MCP client needed
+imessage-bridge config --agent &lt;agent&gt;                     # print client setup snippets
+imessage-bridge connector --agent &lt;agent&gt; --grok            # Grok Bot custom connector JSON
+imessage-bridge status [--agent &lt;agent&gt;]
+imessage-bridge agents
+imessage-bridge forget --agent &lt;agent&gt;</code></pre>
+
+  <h2 id="files">Files, updating, uninstalling</h2>
+  <ul>
+    <li>Agent credentials: <code>~/.config/imessage-bridge/agents/&lt;agent&gt;.json</code> (mode 600)</li>
+    <li>App settings and agents: <code>~/Library/Application Support/iMessage Bridge/</code></li>
+    <li>API keys: the Keychain</li>
+  </ul>
+  <p>To update, run <code>git pull &amp;&amp; ./scripts/install.sh</code> in the repository. To uninstall, quit the app from the menu bar and delete <code>/Applications/iMessage Bridge.app</code>, <code>~/.local/bin/imessage-bridge</code>, <code>~/.config/imessage-bridge</code> and <code>~/Library/Application Support/iMessage Bridge</code>.</p>
+
+  <h2 id="security">Security notes</h2>
+  <ul>
+    <li>The local server binds to 127.0.0.1 and rejects requests with an <code>Origin</code> header (web pages) or an unexpected <code>Host</code> header (DNS rebinding).</li>
+    <li>The app stores only a SHA-256 hash of each token. Any program running as you can read the credential files, as it can your other dotfiles; the app is the boundary, since tokens can be revoked and are limited to what you granted.</li>
+    <li>Every tool call appears on the Activity page, by agent. Message text is never logged.</li>
+    <li>Messages an agent reads are sent to that agent's AI provider.</li>
+  </ul>
+  <p class="warn"><strong>Prompt injection is the main risk.</strong> Anyone who texts you can write instructions an agent might follow. Keep "Ask me before every send" on unless you have a good reason.</p>
+  <figure class="shot">
+    <picture>
+      <source srcset="images/activity-dark.png" media="(prefers-color-scheme: dark)">
+      <img src="images/activity-light.png" alt="Activity log listing tool calls by agent" loading="lazy">
+    </picture>
+    <figcaption>The activity log.</figcaption>
+  </figure>
+
+  <footer>
+    <a href="https://github.com/cmer/imessage-bridge">Source on GitHub</a>. MIT licensed. Message decoding, redaction and triage rules adapted from
+    <a href="https://github.com/jeffhuber/grokbot-imessage-skill">grokbot-imessage-skill</a> by Jeff Huber.
+  </footer>
+</main>
+</body>
+</html>
