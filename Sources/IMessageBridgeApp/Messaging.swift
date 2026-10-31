@@ -48,17 +48,35 @@ enum Messaging {
 
     /// Native dialog showing the full message. Cancel is the default button;
     /// closing, timing out or any failure means "don't send".
-    static func confirmSend(agent: String, to: String, name: String?, service: String, text: String) -> Bool {
-        guard !confirmationOpen else { return false }
+    struct Confirmation {
+        var approved = false
+        var alwaysAllowRecipient = false
+    }
+
+    /// `warnings` explain why the dialog appeared (new recipient, flagged
+    /// reads). `offerAllowRecipient` adds an "Always allow sending to…" box.
+    static func confirmSend(agent: String, to: String, name: String?, service: String, text: String,
+                            warnings: [String] = [], offerAllowRecipient: Bool = false) -> Confirmation {
+        guard !confirmationOpen else { return Confirmation() }
         confirmationOpen = true
         defer { confirmationOpen = false }
 
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.alertStyle = .warning
+        alert.alertStyle = warnings.isEmpty ? .warning : .critical
         alert.messageText = "\(agent) wants to send a message"
         let who = name.map { "\($0) (\(to))" } ?? to
-        alert.informativeText = "To: \(who)\nVia: \(service)\n\nRead the full message below before sending."
+        var info = "To: \(who)\nVia: \(service)"
+        if !warnings.isEmpty {
+            info += "\n\n" + warnings.map { "⚠︎ " + $0 }.joined(separator: "\n")
+        }
+        info += "\n\nRead the full message below before sending."
+        alert.informativeText = info
+        if offerAllowRecipient {
+            alert.showsSuppressionButton = true
+            alert.suppressionButton?.title = "Always allow sending to \(who)"
+            alert.suppressionButton?.state = .off
+        }
 
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 380, height: 160))
         scroll.hasVerticalScroller = true
@@ -82,7 +100,9 @@ enum Messaging {
         RunLoop.main.add(timer, forMode: .modalPanel)
         let response = alert.runModal()
         timer.invalidate()
-        return response == .alertSecondButtonReturn
+        let approved = response == .alertSecondButtonReturn
+        return Confirmation(approved: approved,
+                            alwaysAllowRecipient: approved && offerAllowRecipient && alert.suppressionButton?.state == .on)
     }
 
     static func send(to: String, text: String, service: String) throws {

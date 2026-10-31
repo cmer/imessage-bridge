@@ -74,6 +74,28 @@ keychain, or `$SIGN_IDENTITY` if set, and falls back to ad hoc signing. With a s
 Developer ID, the Full Disk Access grant survives rebuilds. With ad hoc signing, you have
 to grant it again after every rebuild.
 
+## Safety: recipients and prompt injection
+
+Anyone who texts you can write instructions an agent might follow. The **Safety** page has
+two independent layers:
+
+- **Allowed recipients** (on by default). Sending to anyone not on the list always shows the
+  confirmation dialog, even for agents allowed to send without asking. The dialog has an
+  "Always allow sending to…" checkbox, and an optional toggle allows everyone in your
+  contacts. This is deterministic: no message wording can get past it.
+- **Prompt injection detection** (optional; needs a TypeSafe or OpenRouter API key, stored
+  in the Keychain). Incoming messages are checked with TypeSafe's Jev model before an agent
+  sees them. By default only senders not in your contacts are checked. A flagged message is
+  hidden from the agent (or shown with a warning), and that agent must get your confirmation
+  for every send over the next 30 minutes. Local checks run first and catch blatant cases and
+  hidden Unicode "tag" text for free.
+
+The Jev prompt (`Sources/BridgeCore/JevPrompt.swift`) is designed around Datadog Security
+Labs' finding that a counterfeit policy embedded in the message can flip Jev's verdict.
+Definitions live only in trusted instructions, any attempt to label or redefine the check
+counts as evidence of an attack, and a separate question looks only for such attempts.
+Detection still can't be perfect; treat it as an alarm and rely on the recipient list.
+
 ## Network access (optional)
 
 Off by default. When turned on (Network page), the app also listens on port 7543 with TLS,

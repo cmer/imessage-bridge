@@ -41,6 +41,80 @@ struct BridgeSettings: Codable, Equatable {
     var networkEnabled = false
     var networkPort: UInt16 = 7543
     var allowPairing = true
+
+    // Recipients
+    var confirmUnknownRecipients = true
+    var contactsAreAllowed = false
+    var allowedRecipients: [String] = []
+
+    var detection = DetectionSettings()
+
+    init() {}
+
+    // Missing keys fall back to defaults so older config files keep loading.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = BridgeSettings()
+        port = try c.decodeIfPresent(UInt16.self, forKey: .port) ?? d.port
+        networkEnabled = try c.decodeIfPresent(Bool.self, forKey: .networkEnabled) ?? d.networkEnabled
+        networkPort = try c.decodeIfPresent(UInt16.self, forKey: .networkPort) ?? d.networkPort
+        allowPairing = try c.decodeIfPresent(Bool.self, forKey: .allowPairing) ?? d.allowPairing
+        confirmUnknownRecipients = try c.decodeIfPresent(Bool.self, forKey: .confirmUnknownRecipients) ?? d.confirmUnknownRecipients
+        contactsAreAllowed = try c.decodeIfPresent(Bool.self, forKey: .contactsAreAllowed) ?? d.contactsAreAllowed
+        allowedRecipients = try c.decodeIfPresent([String].self, forKey: .allowedRecipients) ?? d.allowedRecipients
+        detection = try c.decodeIfPresent(DetectionSettings.self, forKey: .detection) ?? d.detection
+    }
+
+    func isAllowedRecipient(_ handle: String, isContact: Bool) -> Bool {
+        if contactsAreAllowed && isContact { return true }
+        let n = ContactBook.normalize(handle)
+        return !n.isEmpty && allowedRecipients.contains { ContactBook.normalize($0) == n }
+    }
+}
+
+enum DetectionSensitivity: Double, Codable, CaseIterable {
+    case high = 0.3
+    case balanced = 0.5
+    case low = 0.7
+
+    var label: String {
+        switch self {
+        case .high: return "High (flags more)"
+        case .balanced: return "Balanced"
+        case .low: return "Low (flags less)"
+        }
+    }
+}
+
+struct DetectionSettings: Codable, Equatable {
+    var enabled = false
+    var provider: JevProvider = .typesafe
+    var model = ""                          // empty = provider default
+    var sensitivity: DetectionSensitivity = .balanced
+    var scanContacts = false
+    var hideFlagged = true
+    var requireNoDataCollection = true
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = DetectionSettings()
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? d.enabled
+        provider = try c.decodeIfPresent(JevProvider.self, forKey: .provider) ?? d.provider
+        model = try c.decodeIfPresent(String.self, forKey: .model) ?? d.model
+        sensitivity = try c.decodeIfPresent(DetectionSensitivity.self, forKey: .sensitivity) ?? d.sensitivity
+        scanContacts = try c.decodeIfPresent(Bool.self, forKey: .scanContacts) ?? d.scanContacts
+        hideFlagged = try c.decodeIfPresent(Bool.self, forKey: .hideFlagged) ?? d.hideFlagged
+        requireNoDataCollection = try c.decodeIfPresent(Bool.self, forKey: .requireNoDataCollection) ?? d.requireNoDataCollection
+    }
+}
+
+/// An agent that recently read a flagged (or unscreened) message must get
+/// confirmation for its next sends, whatever its own settings say.
+struct Taint {
+    let until: Date
+    let reason: String
 }
 
 struct BridgeConfig: Codable {

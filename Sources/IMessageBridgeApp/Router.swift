@@ -171,7 +171,7 @@ final class Router {
     }
 
     private func run(_ name: String, _ a: [String: Any], _ agent: AgentRecord) async throws -> [String: Any] {
-        let scope = agent.scope
+        let scope = await MainActor.run { state.scope(for: agent) }
         let service = self.service
         switch name {
         case "review_messages":
@@ -217,12 +217,36 @@ final class Router {
             throw BridgeError.forbidden("Send limit reached (\(AppState.sendsPerHour) per hour for this agent).")
         }
         let name = await detached { service.displayName(for: to) }
-        if agent.confirmSends {
-            let approved = await MainActor.run {
-                Messaging.confirmSend(agent: agent.name, to: to, name: name, service: svc, text: text)
+
+        // Reasons to ask that hold even when this agent may send without asking.
+        let (unknownRecipient, taint) = await MainActor.run { () -> (Bool, Taint?) in
+            let s = state.settings
+            let unknown = s.confirmUnknownRecipients && !s.isAllowedRecipient(to, isContact: name != nil)
+            return (unknown, state.activeTaint(agent.id))
+        }
+        var warnings: [String] = []
+        if unknownRecipient {
+            warnings.append("\(name ?? to) isn't on your allowed recipients list.")
+        }
+        if let taint {
+            warnings.append("You're seeing this because \(taint.reason).")
+        }
+
+        let reasons = warnings
+        if agent.confirmSends || !reasons.isEmpty {
+            let result = await MainActor.run {
+                Messaging.confirmSend(agent: agent.name, to: to, name: name, service: svc, text: text,
+                                      warnings: reasons, offerAllowRecipient: unknownRecipient)
             }
-            guard approved else {
-                throw BridgeError.forbidden("The user did not approve this message (declined, timed out, or another confirmation was open). Nothing was sent.")
+            guard result.approved else {
+                await MainActor.run {
+                    state.log(agent: agent.name, action: "send_declined",
+                              detail: "to \(to)" + (reasons.isEmpty ? "" : " (\(reasons.count) warning\(reasons.count == 1 ? "" : "s"))"), ok: false)
+                }
+                throw BridgeError.forbidden("The user did not approve this message (declined, timed out, or another confirmation was open). Nothing was sent. Do not retry unless the user asks.")
+            }
+            if result.alwaysAllowRecipient {
+                await MainActor.run { try? state.addAllowedRecipient(to) }
             }
         }
         try await MainActor.run { try Messaging.send(to: to, text: text, service: svc) }

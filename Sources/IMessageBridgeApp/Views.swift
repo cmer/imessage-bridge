@@ -4,6 +4,7 @@ import SwiftUI
 
 enum SidebarItem: Hashable {
     case setup
+    case safety
     case activity
     case network
     case agent(UUID)
@@ -18,6 +19,7 @@ struct MainView: View {
             List(selection: $selection.value) {
                 Section {
                     Label("Setup", systemImage: "checklist").tag(SidebarItem.setup)
+                    Label("Safety", systemImage: "checkmark.shield").tag(SidebarItem.safety)
                     Label("Activity", systemImage: "clock.arrow.circlepath").tag(SidebarItem.activity)
                     Label("Network", systemImage: "network").tag(SidebarItem.network)
                 }
@@ -43,6 +45,7 @@ struct MainView: View {
                 } else {
                     SetupView(state: state)
                 }
+            case .safety: SafetyView(state: state)
             case .activity: ActivityView(state: state)
             case .network: NetworkView(state: state)
             default: SetupView(state: state)
@@ -235,6 +238,14 @@ struct AgentDetailView: View {
 
     var body: some View {
         Form {
+            if let taint = state.activeTaint(m.agent.id) {
+                Section {
+                    Label("Every send needs your confirmation until \(taint.until.formatted(date: .omitted, time: .shortened)), because \(taint.reason).",
+                          systemImage: "exclamationmark.shield")
+                        .foregroundStyle(.orange)
+                    Button("Clear Now") { state.clearTaint(m.agent.id) }
+                }
+            }
             Section("Permissions") {
                 Toggle("Read messages and contacts", isOn: $m.agent.canRead)
                 Toggle("Send messages", isOn: $m.agent.canSend)
