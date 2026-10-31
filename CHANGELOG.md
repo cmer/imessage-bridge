@@ -6,6 +6,8 @@ and uses it as the GitHub release notes.
 
 ## Unreleased
 
+## 0.9.2 - 2026-10-31
+
 ### Changed
 - The update window lists what changed in the new version, instead of showing a cramped
   GitHub page.
