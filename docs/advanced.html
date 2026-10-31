@@ -62,11 +62,12 @@ imessage-bridge pair --name "Grok Bot" --read --send        # read and send</cod
   <p>Add a stdio MCP server with command <code>~/.local/bin/imessage-bridge</code> and args <code>["mcp", "--agent", "&lt;name&gt;"]</code>. <code>imessage-bridge config --agent &lt;name&gt;</code> prints the JSON to paste.</p>
 
   <h3>Grok Bot</h3>
-  <p>Grok Bot adds its own custom connector right after pairing, using the JSON from <code>imessage-bridge connector --agent grok-bot --grok</code>, so there's nothing to paste. If it didn't, click <em>Copy Grok Bot Connector</em> on the agent's page, then in Grok Bot choose <em>Add a custom connector</em> and paste.</p>
-  <p>Don't use a command-style (stdio) connector: Grok runs those on xAI's servers, which can't reach your Mac. If the connector shows an error, delete it. Grok Bot can still use the bridge by running one-line commands you approve:</p>
-  <pre><code>imessage-bridge call --agent grok-bot                      # list available tools
+  <p>Grok Bot uses the bridge by running one command per tool call on your Mac. It doesn't need a connector. Grok Bot's custom connectors run in xAI's cloud, which can't reach your Mac, so delete any iMessage Bridge connector it added.</p>
+  <pre><code>imessage-bridge call --agent grok-bot                      # list tools and their arguments
 imessage-bridge call --agent grok-bot review_messages days=2
-imessage-bridge call --agent grok-bot get_conversation chat="Sam" days=7</code></pre>
+imessage-bridge call --agent grok-bot get_conversation chat="Sam" days=7
+imessage-bridge call --agent grok-bot send_message '{"to": "+15555550142", "text": "On my way"}'</code></pre>
+  <p>Arguments are typed by the tool, so phone numbers and message text stay text. For message text, pass one JSON object so quotes and newlines survive the shell. In a new Grok Bot chat, click <em>Copy Grok Bot Instructions</em> on the agent's page and paste them to remind it how to use the bridge.</p>
 
   <h2 id="permissions">Agent permissions</h2>
   <p>Open an agent's page in the sidebar to change what it can do:</p>
@@ -134,8 +135,8 @@ imessage-bridge call --agent grok-bot get_conversation chat="Sam" days=7</code><
   <pre><code>imessage-bridge pair --name &lt;agent&gt; [--read] [--send] [--url URL --fingerprint FP]
 imessage-bridge mcp --agent &lt;agent&gt;                        # stdio MCP server for clients
 imessage-bridge call --agent &lt;agent&gt; [tool key=value …]    # one tool call, no MCP client needed
+imessage-bridge call --agent &lt;agent&gt; tool '{"key": "value"}' # same, arguments as JSON
 imessage-bridge config --agent &lt;agent&gt;                     # print client setup snippets
-imessage-bridge connector --agent &lt;agent&gt; --grok            # Grok Bot custom connector JSON
 imessage-bridge status [--agent &lt;agent&gt;]
 imessage-bridge agents
 imessage-bridge forget --agent &lt;agent&gt;</code></pre>

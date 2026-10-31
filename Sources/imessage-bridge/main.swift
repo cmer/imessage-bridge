@@ -277,14 +277,13 @@ func printConfig(_ c: Credential, showToken: Bool = false) {
     print("Connect an MCP client (pick the one you are):\n")
     print("• Claude Code:")
     print("    " + ClientSetup.claudeCodeCommand(cli: cli, agent: c.name) + "\n")
-    print("• Grok Bot: add a custom connector yourself now, using exactly the JSON from this command.")
-    print("  Don't ask the user to copy or paste anything:")
-    print("    \(ClientSetup.shellQuote(cli)) connector --agent \(slug(c.name)) --grok")
-    print("  It points at this Mac's address and includes this agent's token. Don't use a command")
-    print("  (stdio) connector: Grok Bot runs those on xAI's machines, where this CLI doesn't exist.")
-    print("  Until the connector works, run tools directly on this Mac, one line each:")
-    print("    \(ClientSetup.shellQuote(cli)) call --agent \(slug(c.name))      (lists every tool)")
-    print("    \(ClientSetup.shellQuote(cli)) call --agent \(slug(c.name)) review_messages days=2\n")
+    print("• Grok Bot: don't add a custom connector. Grok Bot's connectors run in xAI's cloud and")
+    print("  can't reach this Mac. Run the tools on this Mac instead, one command each:")
+    print("    \(ClientSetup.shellQuote(cli)) call --agent \(slug(c.name))      (lists your tools and their arguments)")
+    print("    \(ClientSetup.shellQuote(cli)) call --agent \(slug(c.name)) review_messages days=2")
+    print("    \(ClientSetup.shellQuote(cli)) call --agent \(slug(c.name)) get_conversation chat=\"Sam\" days=7")
+    print("  For message text, pass one JSON object so quotes and newlines survive the shell:")
+    print("    \(ClientSetup.shellQuote(cli)) call --agent \(slug(c.name)) send_message '{\"to\": \"+15555550142\", \"text\": \"On my way\"}'\n")
     print("• Clients that launch a local MCP server on this Mac (Claude Desktop, Cursor, Codex, …):")
     print(indent(ClientSetup.mcpServersJSON(cli: cli, agent: c.name)))
     print("\n• Clients that speak MCP over HTTP:")
@@ -359,23 +358,44 @@ func call(_ args: Args) {
         }
     }
 
+    let tools = rpc("tools/list", [:])["tools"] as? [[String: Any]] ?? []
     guard let tool = args.positionals.first else {
-        let tools = rpc("tools/list", [:])["tools"] as? [[String: Any]] ?? []
         if tools.isEmpty { print("This agent has no tools. Check its permissions in the app.") }
-        for t in tools {
-            let props = ((t["inputSchema"] as? [String: Any])?["properties"] as? [String: Any])?.keys.sorted() ?? []
-            print("\(t["name"] ?? "?")  \(props.map { "\($0)=…" }.joined(separator: " "))")
-            if let d = t["description"] as? String { print("    " + d) }
-        }
+        for t in tools { printTool(t) }
         return
     }
+    guard let def = tools.first(where: { $0["name"] as? String == tool }) else {
+        let names = tools.compactMap { $0["name"] as? String }
+        fail("\"\(tool)\" isn't one of this agent's tools" + (names.isEmpty
+            ? ". Check its permissions in the app."
+            : " (\(names.joined(separator: ", "))). Tools missing here are turned off for this agent in the app."))
+    }
     let arguments: [String: Any]
-    do { arguments = try ClientSetup.toolArguments(Array(args.positionals.dropFirst())) }
+    do { arguments = try ClientSetup.toolArguments(Array(args.positionals.dropFirst()), schema: def["inputSchema"] as? [String: Any] ?? [:]) }
     catch { fail((error as? LocalizedError)?.errorDescription ?? "\(error)") }
     let result = rpc("tools/call", ["name": tool, "arguments": arguments])
     let text = (result["content"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined(separator: "\n") ?? ""
     if result["isError"] as? Bool == true { fail(text) }
     print(text)
+}
+
+/// One tool for `call`'s listing: a usage line, its description, then one
+/// line per argument.
+func printTool(_ t: [String: Any]) {
+    let schema = t["inputSchema"] as? [String: Any] ?? [:]
+    let props = schema["properties"] as? [String: [String: Any]] ?? [:]
+    let required = Set(schema["required"] as? [String] ?? [])
+    let keys = props.keys.sorted { (required.contains($0) ? 0 : 1, $0) < (required.contains($1) ? 0 : 1, $1) }
+    let usage = keys.map { required.contains($0) ? "\($0)=…" : "[\($0)=…]" }.joined(separator: " ")
+    print("\(t["name"] ?? "?")  \(usage)")
+    if let d = t["description"] as? String { print("    " + d) }
+    for k in keys {
+        let p = props[k] ?? [:]
+        let type = (p["enum"] as? [String])?.joined(separator: "|") ?? (p["type"] as? String ?? "")
+        let desc = p["description"] as? String ?? ""
+        print("      \(k) (\(type)\(required.contains(k) ? ", required" : "")): \(desc)")
+    }
+    print("")
 }
 
 func status(_ args: Args) {
@@ -431,15 +451,13 @@ func usage() -> Never {
           imessage-bridge mcp --agent <agent>
               Run as a stdio MCP server, forwarding to the app with that agent's token.
 
-          imessage-bridge call --agent <agent> [<tool> key=value ...]
-              Run one tool and print its JSON result. Without a tool, lists the tools.
+          imessage-bridge call --agent <agent> [<tool> key=value ... | <tool> '{"key": "value"}']
+              Run one tool and print its JSON result. Without a tool, lists the tools and
+              their arguments. This is how Grok Bot uses the bridge.
               Example: imessage-bridge call --agent grok-bot get_conversation chat="Sam" days=7
 
-          imessage-bridge connector --agent <agent> --grok
-              Print the custom connector JSON for Grok Bot (includes the agent's token).
-
           imessage-bridge config --agent <agent> [--show-token]
-              Print setup snippets for Claude Code, Claude Desktop, Grok and other MCP clients.
+              Print setup snippets for Claude Code, Grok Bot and other MCP clients.
 
           imessage-bridge status [--agent <agent>]
           imessage-bridge agents
@@ -454,14 +472,13 @@ case "pair": pair(args)
 case "mcp": mcp(args)
 case "call": call(args)
 case "connector":
-    // Prints the JSON for Grok Bot's "Add a custom connector" (HTTP, client
-    // placement, token included). Only for clients that store it themselves.
-    guard let a = args.options["--agent"], args.flags.contains("--grok") else {
-        fail("usage: imessage-bridge connector --agent <name> --grok")
-    }
-    let c = loadCredential(a)
-    guard c.fingerprint == nil else { fail("Grok Bot connectors only work with an agent paired on this Mac") }
-    print(ClientSetup.grokConnectorJSON(url: c.url, token: c.token))
+    // Removed: Grok Bot's custom connectors run in xAI's cloud and can't reach
+    // this Mac. Kept so agents following old instructions learn what to do.
+    fail("""
+        there's no connector for Grok Bot: its custom connectors run in xAI's cloud and can't reach \
+        this Mac. Delete any iMessage Bridge connector you added and run tools on this Mac instead:
+          \(ClientSetup.shellQuote(cliCommandPath())) call --agent \(args.options["--agent"].map(slug) ?? "<agent>")
+        """)
 case "config":
     guard let a = args.options["--agent"] else { fail("usage: imessage-bridge config --agent <name>") }
     printConfig(loadCredential(a), showToken: args.flags.contains("--show-token"))

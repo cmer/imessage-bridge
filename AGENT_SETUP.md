@@ -72,21 +72,20 @@ them as printed. For Claude Code it looks like:
 claude mcp add imessage --scope user -- <CLI path> mcp --agent claude-code
 ```
 
-If you are Grok Bot, add the custom connector yourself, with exactly the JSON this
-prints (don't ask the user to copy or paste anything):
+If you are Grok Bot, don't add a custom connector of any kind. Grok Bot's
+connectors run in xAI's cloud, which can't reach this Mac. If you already added one
+for iMessage Bridge, delete it. Run the tools on this Mac instead, one command each:
 
 ```sh
-imessage-bridge connector --agent grok-bot --grok
-```
-
-Don't add a command (stdio) connector: Grok Bot runs those on xAI's machines, where
-this Mac's CLI doesn't exist. Until the connector works, call tools directly:
-
-```sh
-imessage-bridge call --agent grok-bot                      # list the tools you can use
+imessage-bridge call --agent grok-bot                      # list your tools and their arguments
 imessage-bridge call --agent grok-bot review_messages days=2
 imessage-bridge call --agent grok-bot get_conversation chat="Sam" days=7
+imessage-bridge call --agent grok-bot send_message '{"to": "+15555550142", "text": "On my way"}'
 ```
+
+Arguments are typed by the tool, so phone numbers and message text stay text. For
+message text, pass one JSON object so quotes, apostrophes and newlines survive the
+shell. The result is JSON on stdout; errors go to stderr with a non-zero exit code.
 
 For other clients, add a stdio MCP server with the CLI path from those snippets
 as the command and args `["mcp", "--agent", "<agent>"]`.

@@ -240,23 +240,40 @@ import Testing
     }
 }
 
-@Suite struct GrokConnectorTests {
-    @Test func httpClientPlacement() throws {
-        let json = ClientSetup.grokConnectorJSON(url: "http://127.0.0.1:7542", token: "imb_x")
-        let o = try JSONSerialization.jsonObject(with: Data(json.utf8)) as! [String: Any]
-        let s = (o["mcpServers"] as! [String: Any])["imessage"] as! [String: Any]
-        #expect(s["type"] as? String == "http")
-        #expect(s["placement"] as? String == "client")
-        #expect(s["url"] as? String == "http://127.0.0.1:7542/mcp")
-        #expect((s["headers"] as? [String: String])?["Authorization"] == "Bearer imb_x")
+@Suite struct CallArgumentTests {
+    let schema: [String: Any] = ["type": "object", "properties": [
+        "to": ["type": "string"], "text": ["type": "string"], "chat": ["type": "string"],
+        "days": ["type": "number"], "limit": ["type": "integer"], "flag": ["type": "boolean"],
+    ]]
+
+    @Test func typedBySchema() throws {
+        let a = try ClientSetup.toolArguments(["chat=Sam Lee", "days=1.5", "limit=20", "flag=true", "text=a=b"], schema: schema)
+        #expect(a["chat"] as? String == "Sam Lee")
+        #expect(a["days"] as? Double == 1.5)
+        #expect(a["limit"] as? Int == 20)
+        #expect(a["flag"] as? Bool == true)
+        #expect(a["text"] as? String == "a=b")
     }
 
-    @Test func toolArguments() throws {
-        let a = try ClientSetup.toolArguments(["chat=Sam Lee", "days=7", "include_me=true", "q=a=b"])
-        #expect(a["chat"] as? String == "Sam Lee")
-        #expect(a["days"] as? Int == 7)
-        #expect(a["include_me"] as? Bool == true)
-        #expect(a["q"] as? String == "a=b")
-        #expect(throws: BridgeError.self) { try ClientSetup.toolArguments(["oops"]) }
+    @Test func numberLikeStringsStayStrings() throws {
+        let a = try ClientSetup.toolArguments(["to=+15555550142", "text=7", "chat=5555550142"], schema: schema)
+        #expect(a["to"] as? String == "+15555550142")
+        #expect(a["text"] as? String == "7")
+        #expect(a["chat"] as? String == "5555550142")
+    }
+
+    @Test func jsonObject() throws {
+        let a = try ClientSetup.toolArguments([#"{"to": "+15555550142", "text": "It's \"fine\"\nsee you"}"#], schema: schema)
+        #expect(a["to"] as? String == "+15555550142")
+        #expect(a["text"] as? String == "It's \"fine\"\nsee you")
+    }
+
+    @Test func rejectsBadInput() {
+        #expect(throws: BridgeError.self) { try ClientSetup.toolArguments(["oops"], schema: schema) }
+        #expect(throws: BridgeError.self) { try ClientSetup.toolArguments(["chta=Sam"], schema: schema) }
+        #expect(throws: BridgeError.self) { try ClientSetup.toolArguments(["limit=2.5"], schema: schema) }
+        #expect(throws: BridgeError.self) { try ClientSetup.toolArguments(["flag=yes"], schema: schema) }
+        #expect(throws: BridgeError.self) { try ClientSetup.toolArguments(["{not json"], schema: schema) }
+        #expect(throws: BridgeError.self) { try ClientSetup.toolArguments([#"{"bogus": 1}"#], schema: schema) }
     }
 }

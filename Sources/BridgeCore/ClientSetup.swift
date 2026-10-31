@@ -35,49 +35,56 @@ public enum ClientSetup {
     }
 
     /// `{"mcpServers": {"imessage": {"command": …, "args": […]}}}` — the format
-    /// Grok Bot's custom connector dialog, Claude Desktop and Cursor accept.
+    /// Claude Desktop and Cursor accept.
     public static func mcpServersJSON(cli: String, agent: String) -> String {
         let obj: [String: Any] = ["mcpServers": [connectorName: ["command": cli, "args": mcpArgs(agent: agent)]]]
         let data = try! JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         return String(decoding: data, as: UTF8.self)
     }
 
-    /// Grok Bot runs command connectors on xAI's cloud machines, where this
-    /// Mac's CLI doesn't exist. An HTTP connector with `placement: client`
-    /// asks the Grok Bot app on this Mac to make the connection instead, so
-    /// it can reach the bridge on 127.0.0.1. The token goes in the header.
-    public static func grokConnectorJSON(url: String, token: String) -> String {
-        let server: [String: Any] = [
-            "type": "http",
-            "url": url + "/mcp",
-            "headers": ["Authorization": "Bearer " + token],
-            "placement": "client",
-        ]
-        let obj: [String: Any] = ["mcpServers": [connectorName: server]]
-        let data = try! JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
-        return String(decoding: data, as: UTF8.self)
-    }
+    /// Turns the words after a tool name into its arguments, typed by the
+    /// tool's input schema. Either `key=value` words, or one JSON object (handy
+    /// for message text with quotes or newlines). A value stays a string when
+    /// the schema says string, so `to=+15555550142` and `text=7` stay text.
+    public static func toolArguments(_ words: [String], schema: [String: Any]) throws -> [String: Any] {
+        let props = schema["properties"] as? [String: Any] ?? [:]
+        let known = props.keys.sorted().joined(separator: ", ")
+        func check(_ key: String) throws -> String? {
+            guard let p = props[key] as? [String: Any] else {
+                throw BridgeError.invalid(known.isEmpty
+                    ? "this tool takes no arguments, got \"\(key)\""
+                    : "unknown argument \"\(key)\"; this tool takes: \(known)")
+            }
+            return p["type"] as? String
+        }
 
-    /// The saved credential's URL and token, if this Mac has one for `agent`.
-    public static func savedCredential(agent: String) -> (url: String, token: String)? {
-        guard let d = try? Data(contentsOf: credentialURL(agent: agent)),
-              let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
-              let url = o["url"] as? String, let token = o["token"] as? String else { return nil }
-        return (url, token)
-    }
+        if words.count == 1, words[0].trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") {
+            guard let obj = (try? JSONSerialization.jsonObject(with: Data(words[0].utf8))) as? [String: Any] else {
+                throw BridgeError.invalid("the arguments aren't a valid JSON object")
+            }
+            for k in obj.keys { _ = try check(k) }
+            return obj
+        }
 
-    /// Turns `key=value` words into tool arguments: numbers and true/false
-    /// become JSON numbers and booleans, everything else stays a string.
-    public static func toolArguments(_ words: [String]) throws -> [String: Any] {
         var out: [String: Any] = [:]
         for w in words {
             guard let eq = w.firstIndex(of: "="), eq != w.startIndex else {
-                throw BridgeError.invalid("expected key=value, got \"\(w)\"")
+                throw BridgeError.invalid("expected key=value or one JSON object, got \"\(w)\"")
             }
             let key = String(w[..<eq]), raw = String(w[w.index(after: eq)...])
-            if let i = Int(raw) { out[key] = i }
-            else if raw == "true" || raw == "false" { out[key] = raw == "true" }
-            else { out[key] = raw }
+            switch try check(key) {
+            case "integer":
+                guard let i = Int(raw) else { throw BridgeError.invalid("\(key) must be a whole number") }
+                out[key] = i
+            case "number":
+                guard let d = Double(raw), d.isFinite else { throw BridgeError.invalid("\(key) must be a number") }
+                out[key] = d
+            case "boolean":
+                guard raw == "true" || raw == "false" else { throw BridgeError.invalid("\(key) must be true or false") }
+                out[key] = raw == "true"
+            default:
+                out[key] = raw
+            }
         }
         return out
     }

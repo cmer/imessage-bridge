@@ -104,17 +104,18 @@ Each agent's page in the app has buttons to copy its setup, and
 - **Claude Desktop, Cursor and other local MCP clients:** add a stdio MCP server with
   command `~/.local/bin/imessage-bridge` and args `["mcp", "--agent", "<name>"]`.
 
-- **Grok Bot:** adds its own custom connector right after pairing, using the JSON from
-  `imessage-bridge connector --agent grok-bot --grok`, so there's nothing to paste. If it
-  didn't, click *Copy Grok Bot Connector* on the agent's page, then in Grok Bot choose
-  *Add a custom connector* and paste. Don't use a command-style (stdio) connector: Grok
-  runs those on xAI's servers, which can't reach your Mac. If the connector shows an
-  error, delete it. Grok Bot can still use the bridge by running one-line commands you
-  approve:
+- **Grok Bot:** runs one command per tool call on your Mac. It doesn't need a connector:
+  Grok Bot's custom connectors run in xAI's cloud, which can't reach your Mac, so delete
+  any iMessage Bridge connector it added.
 
   ```sh
+  imessage-bridge call --agent grok-bot                      # list tools and their arguments
   imessage-bridge call --agent grok-bot review_messages days=2
+  imessage-bridge call --agent grok-bot send_message '{"to": "+15555550142", "text": "On my way"}'
   ```
+
+  Arguments are typed by the tool, so phone numbers and message text stay text. In a new
+  Grok Bot chat, click *Copy Grok Bot Instructions* on the agent's page and paste them.
 
 ### Agent permissions
 
@@ -183,8 +184,8 @@ opening the port on shared Wi-Fi.
 imessage-bridge pair --name <agent> [--read] [--send] [--url URL --fingerprint FP]
 imessage-bridge mcp --agent <agent>          # stdio MCP server for clients
 imessage-bridge call --agent <agent> [tool key=value …]   # one tool call, no MCP client needed
+imessage-bridge call --agent <agent> tool '{"key": "value"}'  # same, arguments as JSON
 imessage-bridge config --agent <agent>       # print client setup snippets
-imessage-bridge connector --agent <agent> --grok   # Grok Bot custom connector JSON
 imessage-bridge status [--agent <agent>]
 imessage-bridge agents | forget --agent <agent>
 ```
