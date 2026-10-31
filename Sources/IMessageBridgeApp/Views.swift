@@ -126,6 +126,12 @@ struct SetupView: View {
                     }
                 }
             }
+            Section("Connect an agent") {
+                Text("Paste this into Claude, Grok or another agent that can run commands on this Mac. You approve the request here and choose its permissions.")
+                    .foregroundStyle(.secondary)
+                CopyableText(text: pairPrompt)
+                Text("CLI: \(state.cliPath)").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            }
             Section("Server") {
                 LabeledContent("Local endpoint", value: "\(state.localURL)/mcp")
                 LabeledContent("Status", value: state.loopbackStatus)
@@ -148,12 +154,6 @@ struct SetupView: View {
                     Button("Check Now") { updater.checkForUpdates() }
                         .disabled(!updater.canCheck)
                 }
-            }
-            Section("Connect an agent") {
-                Text("Paste this into Claude, Grok or another agent that can run commands on this Mac. You approve the request here and choose its permissions.")
-                    .foregroundStyle(.secondary)
-                CopyableText(text: pairPrompt)
-                Text("CLI: \(state.cliPath)").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             }
         }
         .formStyle(.grouped)
