@@ -6,6 +6,10 @@ and uses it as the GitHub release notes.
 
 ## Unreleased
 
+### Changed
+- The update window lists what changed in the new version, instead of showing a cramped
+  GitHub page.
+
 ### Fixed
 - A phone number in another country no longer passes for an allowed recipient, a contact
   or one of an agent's selected chats just because its last 10 digits match (for example

@@ -18,7 +18,8 @@
 #   5. Commits the version bump and changelog, creates an annotated tag vX.Y.Z, pushes both.
 #   6. Signs the DMG for Sparkle and writes appcast.xml, then creates the
 #      GitHub release with the DMG, its SHA-256 and the appcast. The release
-#      notes are the version's CHANGELOG.md section. Installed
+#      notes, on GitHub and in the app's update window, are the version's
+#      CHANGELOG.md section. Installed
 #      apps read the appcast from the latest release to update themselves.
 #   7. Publishes the Homebrew cask (packaging/homebrew/imessage-bridge.rb) to
 #      the tap with the new version and checksum.
@@ -243,6 +244,10 @@ step "Signing the update for Sparkle"
 ED_ATTRS="$(sparkle_tool sign_update --account "$SPARKLE_ACCOUNT" "$DMG")"
 [[ "$ED_ATTRS" == *'sparkle:edSignature="'*'length="'* ]] || die "sign_update failed: $ED_ATTRS"
 MIN_MACOS="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$PLIST")"
+# The update window shows this version's CHANGELOG.md section, rendered by Sparkle
+# as markdown (Sparkle 2.9+, macOS 12+). A "]]>" in it would end the CDATA early,
+# so it's split across two CDATA sections.
+APPCAST_NOTES="$(changelog_section "$VERSION" | sed 's/]]>/]]]]><![CDATA[>/g')"
 cat > "$DIST/appcast.xml" <<XML
 <?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
@@ -255,7 +260,10 @@ cat > "$DIST/appcast.xml" <<XML
       <sparkle:version>$BUILD</sparkle:version>
       <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>$MIN_MACOS</sparkle:minimumSystemVersion>
-      <sparkle:releaseNotesLink>https://github.com/$REPO/releases/tag/$TAG</sparkle:releaseNotesLink>
+      <description sparkle:format="markdown"><![CDATA[
+$APPCAST_NOTES
+]]></description>
+      <sparkle:fullReleaseNotesLink>https://github.com/$REPO/releases</sparkle:fullReleaseNotesLink>
       <enclosure url="https://github.com/$REPO/releases/download/$TAG/$(basename "$DMG")" type="application/octet-stream" $ED_ATTRS/>
     </item>
   </channel>
