@@ -74,7 +74,6 @@ struct SafetyView: View {
                     .init(label: "Patterns", symbol: "text.magnifyingglass", on: screening),
                     .init(label: "On this Mac", symbol: "desktopcomputer", on: localActive),
                     .init(label: "Jev", symbol: "cloud", on: jevActive),
-                    .init(label: "Agent", symbol: "sparkles", on: true, isActor: true),
                     .init(label: "Recipient list", symbol: "person.crop.circle.badge.checkmark",
                           on: state.settings.confirmUnknownRecipients),
                 ])
@@ -269,15 +268,14 @@ struct CheckRow<Control: View>: View {
     }
 }
 
-/// The path a message takes: the checks before the agent reads it, the agent,
-/// then the recipient check before anything is sent. Steps that are off are dimmed.
+/// The path a message takes: the checks before an agent reads it, then the
+/// recipient check before anything is sent. Checks that are off are dimmed.
 struct FlowStrip: View {
     struct Step: Identifiable {
         var id: String { label }
         let label: String
         let symbol: String
         let on: Bool
-        var isActor = false
     }
 
     let steps: [Step]
@@ -288,7 +286,7 @@ struct FlowStrip: View {
             row(showLabels: false)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(steps.map { "\($0.label) \($0.isActor ? "" : $0.on ? "on" : "off")" }.joined(separator: ", "))
+        .accessibilityLabel(steps.map { "\($0.label) \($0.on ? "on" : "off")" }.joined(separator: ", "))
     }
 
     private func row(showLabels: Bool) -> some View {
@@ -317,17 +315,17 @@ struct FlowStrip: View {
             Image(systemName: step.symbol)
             if showLabel { Text(step.label) }
         }
-        .font(.callout.weight(step.isActor ? .semibold : .medium))
+        .font(.callout.weight(.medium))
         .padding(.horizontal, 9)
         .padding(.vertical, 4)
-        .foregroundStyle(!step.on ? AnyShapeStyle(.tertiary) : step.isActor ? AnyShapeStyle(.primary) : AnyShapeStyle(Color.green))
+        .foregroundStyle(step.on ? AnyShapeStyle(Color.green) : AnyShapeStyle(.tertiary))
         .background {
-            Capsule().fill(step.on && !step.isActor ? AnyShapeStyle(Color.green.opacity(0.12)) : AnyShapeStyle(.quaternary.opacity(0.5)))
+            Capsule().fill(step.on ? AnyShapeStyle(Color.green.opacity(0.12)) : AnyShapeStyle(.quaternary.opacity(0.5)))
         }
         .overlay {
             if !step.on { Capsule().strokeBorder(.tertiary, style: StrokeStyle(lineWidth: 1, dash: [3, 2])) }
         }
-        .help(step.isActor ? "The agent reads the message" : "\(step.label): \(step.on ? "on" : "off")")
+        .help("\(step.label): \(step.on ? "on" : "off")")
     }
 }
 

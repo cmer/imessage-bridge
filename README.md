@@ -144,7 +144,8 @@ Agents only see the tools they're allowed to use.
 ### Safety settings
 
 The **Safety** page follows the path a message takes. The card at the top shows that path
-(the checks, the agent, the recipient list) with each step lit when it's on, and how many
+(the checks before an agent reads a message, then the recipient list) with each check lit
+when it's on, and how many
 messages were checked and flagged this session.
 
 **Before an agent reads a message**, incoming messages are screened for prompt injection,

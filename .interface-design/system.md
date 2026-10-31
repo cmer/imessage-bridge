@@ -67,7 +67,8 @@ A horizontal picture of the path a message takes: endpoint icon → chips → en
 - Chips are capsules, 9pt horizontal / 4pt vertical padding, `.callout.weight(.medium)`.
 - On: green text, `Color.green.opacity(0.12)` fill.
 - Off: tertiary text, faint fill, 1pt dashed tertiary border.
-- The actor (the agent) is neutral: primary text, semibold, no status color.
+- Only checks get chips. Don't add non-checks (e.g. the agent): a neutral chip
+  next to green ones reads as "off".
 - Separators: `chevron.right`, `.caption2.weight(.semibold)`, tertiary.
 - `ViewThatFits`: labels + icons, then icons only (labels move to `.help`).
 - One combined accessibility label listing every step and its state.
