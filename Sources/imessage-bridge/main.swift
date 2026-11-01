@@ -8,6 +8,7 @@ import Security
 //   mcp     stdio MCP server that forwards to the app (for MCP clients)
 //   config  print setup snippets for MCP clients
 //   call    run one tool and print the result (for agents without MCP)
+//   watch   print new-message events as JSON lines as they arrive
 //   status  check the app and a saved agent's token
 //   agents  list saved agent credentials
 //   forget  delete a saved credential
@@ -135,6 +136,12 @@ final class Client: NSObject, URLSessionDelegate {
 
     func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
                     completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        Client.checkPin(challenge, pin: pin, completionHandler)
+    }
+
+    /// Accepts the app's self-signed certificate only if it matches the pinned fingerprint.
+    static func checkPin(_ challenge: URLAuthenticationChallenge, pin: String?,
+                         _ completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
               let trust = challenge.protectionSpace.serverTrust else {
             completionHandler(.performDefaultHandling, nil)
@@ -398,6 +405,118 @@ func printTool(_ t: [String: Any]) {
     print("")
 }
 
+/// One connection to GET /v1/events, read as it arrives.
+final class EventConnection: NSObject, URLSessionDataDelegate {
+    private let pin: String?
+    private let onEvent: (SSEEvent) -> Void
+    private let done = DispatchSemaphore(value: 0)
+    private var body = Data()
+    private(set) var parser: SSEParser
+    private(set) var status = 0
+    private(set) var failure: String?
+
+    init(pin: String?, lastEventID: String?, onEvent: @escaping (SSEEvent) -> Void) {
+        self.pin = pin
+        self.onEvent = onEvent
+        parser = SSEParser(lastEventID: lastEventID)
+    }
+
+    /// Blocks until the stream ends.
+    func run(_ req: URLRequest) {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = 45   // the app sends a ping every 15 s
+        cfg.timeoutIntervalForResource = 365 * 24 * 3600
+        cfg.connectionProxyDictionary = [:]
+        let queue = OperationQueue()
+        queue.maxConcurrentOperationCount = 1
+        let session = URLSession(configuration: cfg, delegate: self, delegateQueue: queue)
+        session.dataTask(with: req).resume()
+        done.wait()
+        session.invalidateAndCancel()
+    }
+
+    /// The app's error message for a non-200 response.
+    var errorMessage: String {
+        json(body)["error"] as? String ?? "HTTP \(status)"
+    }
+
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        Client.checkPin(challenge, pin: pin, completionHandler)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        guard status == 200 else {
+            if body.count < 64 * 1024 { body.append(data) }
+            return
+        }
+        for e in parser.feed(data) { onEvent(e) }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        failure = error?.localizedDescription
+        done.signal()
+    }
+}
+
+/// `watch --agent A [--once]`: prints each new-message event as one JSON
+/// line, reconnecting (and resuming where it left off) when the stream drops.
+func watch(_ args: Args) {
+    guard let agent = args.options["--agent"] else { fail("usage: imessage-bridge watch --agent <name> [--once]") }
+    let cred = loadCredential(agent)
+    let client = Client(url: cred.url, fingerprint: cred.fingerprint)
+    let once = args.flags.contains("--once")
+    setvbuf(stdout, nil, _IOLBF, 0)
+
+    var lastID: String?
+    var attempt = 0
+    var reachable = false
+    while true {
+        if !reachable { reachable = ensureAppRunning(client) }
+        var req = URLRequest(url: client.base.appendingPathComponent("v1/events"))
+        req.setValue("Bearer \(cred.token)", forHTTPHeaderField: "Authorization")
+        req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        if let lastID { req.setValue(lastID, forHTTPHeaderField: "Last-Event-ID") }
+        let started = Date()
+        let conn = EventConnection(pin: client.pin, lastEventID: lastID) { e in
+            guard e.event == MessageEvent.type else { return }
+            // Raw newlines in JSON are only ever whitespace, so this keeps it valid.
+            print(e.data.replacingOccurrences(of: "\n", with: ""))
+            fflush(stdout)
+            if once { exit(0) }
+        }
+        conn.run(req)
+        lastID = conn.parser.lastEventID
+
+        let why: String
+        switch conn.status {
+        case 401:
+            fail("\(conn.errorMessage) Pair again: imessage-bridge pair --name \"\(cred.name)\"")
+        case 403:
+            fail(conn.errorMessage)
+        case 200:
+            why = "event stream closed"
+            // A stream that stayed up a while starts the backoff over.
+            if Date().timeIntervalSince(started) > 60 { attempt = 0 }
+        case 0:
+            reachable = false
+            why = "iMessage Bridge is not reachable at \(cred.url) (\(conn.failure ?? "no response"))"
+        default:
+            why = "event stream refused: \(conn.errorMessage)"
+        }
+        let delay = SSE.retryDelay(attempt: attempt)
+        attempt += 1
+        eprint("\(why); reconnecting in \(Int(delay)) s")
+        Thread.sleep(forTimeInterval: delay)
+    }
+}
+
 func status(_ args: Args) {
     var url = args.options["--url"] ?? defaultURL
     var fp = args.options["--fingerprint"]
@@ -456,6 +575,10 @@ func usage() -> Never {
               their arguments. This is how Grok Bot uses the bridge.
               Example: imessage-bridge call --agent grok-bot get_conversation chat="Sam" days=7
 
+          imessage-bridge watch --agent <agent> [--once]
+              Print each new incoming message event as one JSON line, as it arrives.
+              Reconnects and resumes on its own. With --once, exits after the first event.
+
           imessage-bridge config --agent <agent> [--show-token]
               Print setup snippets for Claude Code, Grok Bot and other MCP clients.
 
@@ -471,6 +594,7 @@ switch args.command {
 case "pair": pair(args)
 case "mcp": mcp(args)
 case "call": call(args)
+case "watch": watch(args)
 case "connector":
     // Removed: Grok Bot's custom connectors run in xAI's cloud and can't reach
     // this Mac. Kept so agents following old instructions learn what to do.

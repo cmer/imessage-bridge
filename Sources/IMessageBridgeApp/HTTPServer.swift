@@ -5,6 +5,7 @@ import Security
 struct HTTPRequest {
     let method: String
     let path: String
+    let query: [String: String]
     let headers: [String: String]   // lowercased names
     let body: Data
     let isNetwork: Bool             // arrived on the LAN (TLS) listener
@@ -19,9 +20,19 @@ struct HTTPRequest {
 }
 
 struct HTTPResponse {
+    typealias Streamer = @Sendable (HTTPStream) async -> Void
+
     var status: Int
     var headers: [String: String] = [:]
     var body = Data()
+    /// Set for a streaming response: the server sends the headers with no
+    /// Content-Length, then runs this with the open connection, and closes
+    /// the connection when it returns.
+    var stream: Streamer?
+
+    static func streaming(headers: [String: String], _ streamer: @escaping Streamer) -> HTTPResponse {
+        HTTPResponse(status: 200, headers: headers, stream: streamer)
+    }
 
     static func json(_ status: Int, _ obj: Any, headers: [String: String] = [:]) -> HTTPResponse {
         let data = (try? JSONSerialization.data(withJSONObject: obj, options: [.withoutEscapingSlashes])) ?? Data("{}".utf8)
@@ -39,7 +50,7 @@ struct HTTPResponse {
     func serialized() -> Data {
         var head = "HTTP/1.1 \(status) \(HTTPResponse.reason(status))\r\n"
         var h = headers
-        h["Content-Length"] = String(body.count)
+        if stream == nil { h["Content-Length"] = String(body.count) }
         h["Connection"] = "close"
         h["Cache-Control"] = "no-store"
         for (k, v) in h.sorted(by: { $0.key < $1.key }) { head += "\(k): \(v)\r\n" }
@@ -65,6 +76,97 @@ struct HTTPResponse {
     }
 }
 
+/// The open connection behind a streaming response. Safe to use from any thread.
+final class HTTPStream: @unchecked Sendable {
+    /// A client that stops reading is dropped once this much is waiting to be sent.
+    static let maxPendingBytes = 1024 * 1024
+
+    private let conn: NWConnection
+    private let lock = NSLock()
+    private var closed = false
+    private var pending = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var closeHandlers: [() -> Void] = []
+
+    init(_ conn: NWConnection) {
+        self.conn = conn
+    }
+
+    var isClosed: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return closed
+    }
+
+    /// Queues bytes for the client. Returns false once the stream is closed.
+    @discardableResult
+    func write(_ data: Data) -> Bool {
+        lock.lock()
+        guard !closed else { lock.unlock(); return false }
+        pending += data.count
+        let tooMuch = pending > HTTPStream.maxPendingBytes
+        lock.unlock()
+        if tooMuch { close(flush: false); return false }
+        conn.send(content: data, completion: .contentProcessed { [weak self] error in
+            guard let self else { return }
+            self.lock.lock()
+            self.pending -= data.count
+            self.lock.unlock()
+            if error != nil { self.close(flush: false) }
+        })
+        return true
+    }
+
+    /// Ends the stream and the connection. Safe to call more than once.
+    /// With `flush`, what was already written is sent first (for up to 5 s).
+    func close(flush: Bool = true) {
+        lock.lock()
+        guard !closed else { lock.unlock(); return }
+        closed = true
+        let ws = waiters, hs = closeHandlers
+        waiters = []
+        closeHandlers = []
+        lock.unlock()
+        if flush {
+            let conn = self.conn
+            // Sends go out in order, so this completes after the earlier writes.
+            conn.send(content: nil, contentContext: .finalMessage, isComplete: true,
+                      completion: .contentProcessed { _ in conn.cancel() })
+            DispatchQueue.global().asyncAfter(deadline: .now() + 5) { conn.cancel() }
+        } else {
+            conn.cancel()
+        }
+        for w in ws { w.resume() }
+        for h in hs { h() }
+    }
+
+    /// Runs `handler` once when the stream closes (right away if it already has).
+    func onClose(_ handler: @escaping () -> Void) {
+        lock.lock()
+        if closed { lock.unlock(); handler(); return }
+        closeHandlers.append(handler)
+        lock.unlock()
+    }
+
+    /// Returns when the stream closes, from either side.
+    func waitUntilClosed() async {
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            lock.lock()
+            if closed { lock.unlock(); c.resume(); return }
+            waiters.append(c)
+            lock.unlock()
+        }
+    }
+
+    /// Reads (and drops) anything the client sends, to notice when it hangs up.
+    fileprivate func watchForHangUp() {
+        conn.receive(minimumIncompleteLength: 1, maximumLength: 4096) { [weak self] _, _, isComplete, error in
+            guard let self else { return }
+            if isComplete || error != nil { self.close(flush: false) } else if !self.isClosed { self.watchForHangUp() }
+        }
+    }
+}
+
 /// Small HTTP/1.1 server on Network.framework. One request per connection.
 final class HTTPServer {
     typealias Handler = (HTTPRequest) async -> HTTPResponse
@@ -75,11 +177,14 @@ final class HTTPServer {
     private let handler: Handler
     private let queue = DispatchQueue(label: "imessage-bridge.http")
     private var connections = 0
+    private var streams: [ObjectIdentifier: HTTPStream] = [:]
     var onState: ((String) -> Void)?
 
     static let maxHeaderBytes = 16 * 1024
     static let maxBodyBytes = 1024 * 1024
     static let maxConnections = 32
+    /// Streams stay open, so they get a smaller share of the connections.
+    static let maxStreams = 8
 
     /// `identity` nil = plain HTTP bound to 127.0.0.1; otherwise TLS on all interfaces.
     init(port: UInt16, identity: SecIdentity?, handler: @escaping Handler) throws {
@@ -122,6 +227,10 @@ final class HTTPServer {
 
     func stop() {
         listener.cancel()
+        // Otherwise streams outlive the listener, e.g. after network access is turned off.
+        queue.async { [self] in
+            for s in streams.values { s.close() }
+        }
     }
 
     private func accept(_ conn: NWConnection) {
@@ -145,6 +254,8 @@ final class HTTPServer {
         }
         var buffer = Data()
         var finished = false
+        // Only for reading the request: `finished` is set once it's parsed,
+        // so slow handlers and long-lived streams aren't cut off.
         queue.asyncAfter(deadline: .now() + 15) {
             if !finished { conn.cancel() }
         }
@@ -174,7 +285,26 @@ final class HTTPServer {
     }
 
     private func respond(_ conn: NWConnection, _ resp: HTTPResponse) {
-        conn.send(content: resp.serialized(), completion: .contentProcessed { _ in conn.cancel() })
+        guard let streamer = resp.stream else {
+            conn.send(content: resp.serialized(), completion: .contentProcessed { _ in conn.cancel() })
+            return
+        }
+        queue.async { [self] in
+            guard streams.count < HTTPServer.maxStreams else {
+                respond(conn, .error(503, "Too many open event streams.", headers: ["Retry-After": "30"]))
+                return
+            }
+            let stream = HTTPStream(conn)
+            let key = ObjectIdentifier(stream)
+            streams[key] = stream
+            stream.onClose { [weak self] in self?.queue.async { self?.streams[key] = nil } }
+            stream.write(resp.serialized())
+            stream.watchForHangUp()
+            Task {
+                await streamer(stream)
+                stream.close()
+            }
+        }
     }
 
     private enum ParseResult {
@@ -208,10 +338,17 @@ final class HTTPServer {
         guard buf.count - (bodyStart - buf.startIndex) >= length else { return .needMore }
         let body = buf[bodyStart..<(bodyStart + length)]
         var path = String(requestLine[1])
-        if let q = path.firstIndex(of: "?") { path = String(path[..<q]) }
+        var query: [String: String] = [:]
+        if let q = path.firstIndex(of: "?") {
+            for item in URLComponents(string: "/?" + path[path.index(after: q)...])?.queryItems ?? [] {
+                query[item.name] = item.value ?? ""
+            }
+            path = String(path[..<q])
+        }
         return .request(HTTPRequest(
             method: String(requestLine[0]).uppercased(),
             path: path,
+            query: query,
             headers: headers,
             body: Data(body),
             isNetwork: isNetwork,
