@@ -204,11 +204,12 @@ secret (**Copy** next to *Signing secret*):
 - `webhook-signature`: `v1,` then the base64 HMAC-SHA256 of `{id}.{timestamp}.{body}`,
   keyed with the base64-decoded part of the secret after `whsec_`
 
-Any Standard Webhooks library can check it. Answer with a 2xx status. On a network error,
-a 5xx, 408 or 429, the app tries again after 5 s, 30 s, 2 minutes and 5 minutes; other
-answers, including redirects, aren't retried. After 10 events in a row fail, the app turns
-the webhook off and says why on the agent's page. Events reach each agent's webhook in
-order, one at a time.
+Any Standard Webhooks library can check it. Answer with a 2xx status; anything else,
+including a redirect or a network error, is a failure. The app retries the same event
+after 5 s, 30 s, 2 minutes, then every 5 minutes, and newer events wait behind it so they
+arrive in order. If the receiver is still failing 15 minutes after the first failure, the
+app turns the webhook off, drops the waiting events and says why on the agent's page. An
+HTTP 410 (Gone) turns it off right away.
 
 ### Safety settings
 

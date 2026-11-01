@@ -26,20 +26,35 @@ public enum Webhook {
         }
     }
 
-    /// Waits before each retry. With the first try that makes 5 attempts over about 7.5 minutes.
+    /// Waits between attempts while a receiver is failing: 5 s, 30 s, 2 min,
+    /// then every 5 minutes.
     public static let retryDelays: [TimeInterval] = [5, 30, 120, 300]
 
-    /// The wait before the next attempt after `attempt` failed (1 = the first try), or nil to give up.
-    public static func retryDelay(afterAttempt attempt: Int) -> TimeInterval? {
-        guard attempt >= 1, attempt <= retryDelays.count else { return nil }
-        return retryDelays[attempt - 1]
+    /// How long a receiver may keep failing before its webhook is turned off.
+    public static let giveUpAfter: TimeInterval = 15 * 60
+
+    /// The wait after the `failures`-th failed attempt in a row (1 = the first).
+    public static func retryDelay(afterFailures failures: Int) -> TimeInterval {
+        retryDelays[min(max(failures, 1), retryDelays.count) - 1]
     }
 
-    /// Whether a failed attempt is worth repeating. Network errors (nil), 5xx,
-    /// 408 and 429 might pass later; other answers (3xx, most 4xx) won't change.
-    public static func shouldRetry(status: Int?) -> Bool {
-        guard let status else { return true }
-        return status >= 500 || status == 408 || status == 429
+    public enum NextStep: Equatable, Sendable {
+        case retry(after: TimeInterval)
+        case turnOff
+    }
+
+    /// What to do after a failed attempt. An outage belongs to the receiver,
+    /// not to one event: the clock starts at the first failure in a row and
+    /// keeps running across events, so the webhook turns off `giveUpAfter`
+    /// into an outage however many messages arrive. Every failure is retried
+    /// (a 404 or 401 is usually a setting someone will fix), except 410 Gone,
+    /// which says the address is gone for good.
+    public static func next(after result: WebhookResult, failingSince: Date, failures: Int, now: Date = Date()) -> NextStep {
+        if result.status == 410 { return .turnOff }
+        let elapsed = now.timeIntervalSince(failingSince)
+        if elapsed >= giveUpAfter { return .turnOff }
+        // The last retry lands right at the deadline instead of overshooting it.
+        return .retry(after: min(retryDelay(afterFailures: failures), giveUpAfter - elapsed))
     }
 
     public static let timeout: TimeInterval = 10
@@ -88,7 +103,6 @@ public struct WebhookResult: Sendable, Equatable {
     }
 
     public var ok: Bool { status.map { (200..<300).contains($0) } ?? false }
-    public var retryable: Bool { !ok && Webhook.shouldRetry(status: status) }
 
     /// Short text for the UI and the Activity list: "HTTP 503", "timed out".
     public var summary: String {

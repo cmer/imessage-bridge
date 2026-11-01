@@ -7,8 +7,10 @@ struct WebhookStatus: Equatable {
     var lastAttempt: Date?
     var lastResult: WebhookResult?
     var lastSuccess: Date?
-    /// Events in a row that couldn't be delivered, even after retries.
-    var consecutiveFailures = 0
+    /// When the current run of failed attempts began; nil while deliveries work.
+    var failingSince: Date?
+    /// Failed attempts in a row.
+    var failures = 0
     /// Waiting to try the current event again.
     var retrying = false
     var pending = 0
@@ -17,12 +19,12 @@ struct WebhookStatus: Equatable {
 /// Posts new-message events to the webhook of each agent that has one.
 ///
 /// Each agent has its own queue, delivered in order, one event at a time.
-/// A failed attempt is retried with backoff (Webhook.retryDelays) under the
-/// same webhook-id; an event that still fails counts as one failed delivery.
-/// After `maxConsecutiveFailures` of those in a row the webhook is turned off.
+/// While the receiver fails, the event at the front is retried with backoff
+/// under the same webhook-id and the rest wait behind it. Once the receiver
+/// has been failing for `Webhook.giveUpAfter` (or answers 410 Gone), the
+/// webhook is turned off and the waiting events are dropped.
 @MainActor
 final class WebhookDispatcher: ObservableObject {
-    static let maxConsecutiveFailures = 10
     static let queueCapacity = 200
     nonisolated static var userAgent: String { "iMessageBridge/\(AppState.version)" }
     nonisolated static func secretAccount(_ id: UUID) -> String { "webhook-\(id.uuidString.lowercased())" }
@@ -179,55 +181,73 @@ final class WebhookDispatcher: ObservableObject {
 
     private func deliver(_ event: MessageEvent, to id: UUID) async {
         let body = event.json
-        var attempt = 1
         while !Task.isCancelled {
             guard let (agent, url) = current(id) else { return }
             let req = Webhook.request(url: url, id: event.id, body: body, secret: secret(for: id),
                                       userAgent: WebhookDispatcher.userAgent)
             let result = await sender.send(req)
             guard !Task.isCancelled else { return }
+            let now = Date()
             var s = status[id] ?? WebhookStatus()
-            s.lastAttempt = Date()
+            s.lastAttempt = now
             s.lastResult = result
             if result.ok {
-                if s.consecutiveFailures > 0 {
+                if let since = s.failingSince {
                     state.log(agent: agent.name, action: "webhook_delivered",
-                              detail: "working again after \(s.consecutiveFailures) failed deliver\(s.consecutiveFailures == 1 ? "y" : "ies")", ok: true)
+                              detail: "working again after failing for \(WebhookDispatcher.duration(now.timeIntervalSince(since)))", ok: true)
                 }
-                s.lastSuccess = s.lastAttempt
-                s.consecutiveFailures = 0
+                s.lastSuccess = now
+                s.failingSince = nil
+                s.failures = 0
                 s.retrying = false
                 status[id] = s
                 return
             }
-            if result.retryable, let delay = Webhook.retryDelay(afterAttempt: attempt) {
+            let since = s.failingSince ?? now
+            if s.failingSince == nil {
+                // Once per outage, not per attempt.
+                state.log(agent: agent.name, action: "webhook_failed",
+                          detail: "\(result.summary); retrying for up to \(WebhookDispatcher.duration(Webhook.giveUpAfter))", ok: false)
+            }
+            s.failingSince = since
+            s.failures += 1
+            switch Webhook.next(after: result, failingSince: since, failures: s.failures, now: now) {
+            case .turnOff:
+                s.retrying = false
+                status[id] = s
+                turnOff(agent, last: result, failingSince: since, now: now)
+                return
+            case .retry(let delay):
                 s.retrying = true
                 status[id] = s
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                attempt += 1
-                continue
             }
-            s.retrying = false
-            s.consecutiveFailures += 1
-            status[id] = s
-            state.log(agent: agent.name, action: "webhook_failed",
-                      detail: "\(event.id): \(result.summary) after \(attempt) attempt\(attempt == 1 ? "" : "s")", ok: false)
-            if s.consecutiveFailures >= WebhookDispatcher.maxConsecutiveFailures {
-                turnOff(agent, last: result)
-            }
-            return
         }
     }
 
-    private func turnOff(_ agent: AgentRecord, last: WebhookResult) {
+    private func turnOff(_ agent: AgentRecord, last: WebhookResult, failingSince: Date, now: Date) {
         var a = agent
-        let n = WebhookDispatcher.maxConsecutiveFailures
+        let note: String
+        if last.status == 410 {
+            note = "Turned off because the receiver answered HTTP 410 (Gone)."
+        } else {
+            note = "Turned off after failing for \(WebhookDispatcher.duration(now.timeIntervalSince(failingSince))). The last attempt got \(last.summary)."
+        }
         a.eventSettings.webhookEnabled = false
-        a.eventSettings.webhookDisabledNote = "Turned off after \(n) failed deliveries in a row. The last one got \(last.summary)."
+        a.eventSettings.webhookDisabledNote = note
         queues[a.id]?.removeAll()
         status[a.id]?.pending = 0
         state.update(a)
-        state.log(agent: a.name, action: "webhook_disabled", detail: "\(n) failed deliveries in a row (last: \(last.summary))", ok: false)
+        state.log(agent: a.name, action: "webhook_disabled", detail: note, ok: false)
+    }
+
+    /// "15 minutes", "40 seconds".
+    nonisolated static func duration(_ t: TimeInterval) -> String {
+        let f = DateComponentsFormatter()
+        f.allowedUnits = t < 60 ? [.second] : t < 3600 ? [.minute] : [.hour, .minute]
+        f.unitsStyle = .full
+        f.maximumUnitCount = 2
+        return f.string(from: max(1, t.rounded())) ?? "\(Int(t)) seconds"
     }
 
     /// Stops deliveries that no longer apply, starts over when a webhook is
@@ -248,7 +268,8 @@ final class WebhookDispatcher: ObservableObject {
                 status[id]?.pending = 0
                 status[id]?.retrying = false
             } else if !wasOn && isOn {
-                status[id]?.consecutiveFailures = 0
+                status[id]?.failingSince = nil
+                status[id]?.failures = 0
             }
         }
         known = now

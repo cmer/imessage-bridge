@@ -120,12 +120,12 @@ struct NewMessagesSection: View {
             if r.ok {
                 Label("Last delivered \(at.formatted(.relative(presentation: .named))).\(waiting)", systemImage: "checkmark.circle.fill")
                     .font(.callout).foregroundStyle(.green)
-            } else if s.retrying {
-                Label("Delivery failed (\(r.summary)). Trying again.\(waiting)", systemImage: "exclamationmark.triangle.fill")
+            } else if let since = s.failingSince {
+                Label("Failing since \(since.formatted(date: .omitted, time: .shortened)) (\(r.summary)). Retrying; turns off after \(WebhookDispatcher.duration(Webhook.giveUpAfter)) of failures.\(waiting)",
+                      systemImage: "exclamationmark.triangle.fill")
                     .font(.callout).foregroundStyle(.orange)
             } else {
-                Label("Last delivery failed (\(r.summary)), \(s.consecutiveFailures) in a row. Turns off after \(WebhookDispatcher.maxConsecutiveFailures).\(waiting)",
-                      systemImage: "exclamationmark.triangle.fill")
+                Label("Last delivery failed (\(r.summary)).\(waiting)", systemImage: "exclamationmark.triangle.fill")
                     .font(.callout).foregroundStyle(.orange)
             }
         } else {

@@ -45,41 +45,57 @@ import Testing
 }
 
 @Suite struct WebhookRetryTests {
-    @Test func scheduleGivesFiveAttemptsWithinTenMinutes() {
-        var waits: [TimeInterval] = []
-        var attempt = 1
-        while let d = Webhook.retryDelay(afterAttempt: attempt) {
-            waits.append(d)
-            attempt += 1
-        }
-        #expect(attempt == 5)                       // the 5th attempt is the last
-        #expect(waits == [5, 30, 120, 300])
-        #expect(waits == waits.sorted())
-        #expect(waits.reduce(0, +) <= 600)
-        #expect(Webhook.retryDelay(afterAttempt: 0) == nil)
+    @Test func backsOffThenRepeatsEveryFiveMinutes() {
+        #expect((1...6).map(Webhook.retryDelay(afterFailures:)) == [5, 30, 120, 300, 300, 300])
+        #expect(Webhook.retryDelay(afterFailures: 0) == 5)
     }
 
-    @Test func retriesOnlyWhatMightChange() {
-        #expect(Webhook.shouldRetry(status: nil))
-        #expect(Webhook.shouldRetry(status: 500))
-        #expect(Webhook.shouldRetry(status: 503))
-        #expect(Webhook.shouldRetry(status: 408))
-        #expect(Webhook.shouldRetry(status: 429))
-        #expect(!Webhook.shouldRetry(status: 400))
-        #expect(!Webhook.shouldRetry(status: 401))
-        #expect(!Webhook.shouldRetry(status: 404))
-        #expect(!Webhook.shouldRetry(status: 301))
+    /// Replays an outage: every attempt fails, starting at t = 0.
+    func outage(_ result: WebhookResult) -> (attempts: [TimeInterval], offAt: TimeInterval) {
+        let start = Date(timeIntervalSince1970: 0)
+        var t: TimeInterval = 0
+        var attempts: [TimeInterval] = []
+        for failures in 1...100 {
+            attempts.append(t)
+            switch Webhook.next(after: result, failingSince: start, failures: failures, now: start + t) {
+            case .turnOff: return (attempts, t)
+            case .retry(let d): t += d
+            }
+        }
+        Issue.record("never turned off")
+        return (attempts, t)
+    }
+
+    @Test func turnsOffFifteenMinutesIntoAnOutage() {
+        let (attempts, offAt) = outage(WebhookResult(status: 503))
+        #expect(offAt == Webhook.giveUpAfter)
+        #expect(attempts == [0, 5, 35, 155, 455, 755, 900])
+    }
+
+    @Test func clientErrorsAreRetriedToo() {
+        #expect(outage(WebhookResult(status: 404)).offAt == Webhook.giveUpAfter)
+        #expect(outage(WebhookResult(status: 302)).offAt == Webhook.giveUpAfter)
+        #expect(outage(WebhookResult(status: nil, error: "timed out")).offAt == Webhook.giveUpAfter)
+    }
+
+    @Test func goneTurnsOffAtOnce() {
+        #expect(outage(WebhookResult(status: 410)).attempts == [0])
+    }
+
+    @Test func clockSpansEvents() {
+        // A new event during an outage doesn't restart the clock.
+        let start = Date(timeIntervalSince1970: 0)
+        let late = Webhook.next(after: WebhookResult(status: 500), failingSince: start, failures: 1, now: start + 899)
+        #expect(late == .retry(after: 1))
+        #expect(Webhook.next(after: WebhookResult(status: 500), failingSince: start, failures: 1, now: start + 900) == .turnOff)
     }
 
     @Test func resultClassification() {
         #expect(WebhookResult(status: 200).ok)
         #expect(WebhookResult(status: 204).ok)
         #expect(!WebhookResult(status: 302).ok)
-        #expect(!WebhookResult(status: 302).retryable)
         #expect(WebhookResult(status: 302).summary.contains("redirect"))
-        #expect(WebhookResult(status: nil, error: "timed out").retryable)
         #expect(WebhookResult(status: nil, error: "timed out").summary == "timed out")
-        #expect(!WebhookResult(status: 200).retryable)
     }
 }
 
