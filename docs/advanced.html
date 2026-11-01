@@ -126,8 +126,17 @@ imessage-bridge watch --agent claude-code --once   # wait for the next event, pr
     "hint": "Read them with get_conversation, passing chat_id as chat."
   }
 }</code></pre>
-  <p>Events don't include message text unless it's turned on for that agent in the app. Then <code>hint</code> is replaced by <code>messages</code>, a list of <code>{ts, from, text}</code> with the same redaction and prompt-injection screening as the read tools. Otherwise the agent reads the conversation with <code>get_conversation</code>, which screens it.</p>
+  <p>Events don't include message text unless <strong>Include message text</strong> is on for that agent in the app. Then <code>hint</code> is replaced by <code>messages</code>, a list of <code>{ts, from, text}</code> with the same redaction and prompt-injection screening as the read tools. Otherwise the agent reads the conversation with <code>get_conversation</code>, which screens it.</p>
   <p>Under the hood, <code>watch</code> reads <code>GET /v1/events</code> (on port 7542, or 7543 with network access), a <a href="https://html.spec.whatwg.org/multipage/server-sent-events.html">Server-Sent Events</a> stream that takes the same bearer token as <code>/mcp</code>. Each event is sent as <code>event: message.received</code> with the JSON above as <code>data</code>. To resume after a dropped connection, send the last <code>id:</code> you received as the <code>Last-Event-ID</code> header (or <code>?after=&lt;id&gt;</code>); the app keeps the last 500 messages to replay. After a drop you may get a few events twice; skip repeats by the JSON <code>id</code>. The app sends a <code>: ping</code> comment every 15 seconds and allows 8 open streams at a time.</p>
+  <h3>Webhooks</h3>
+  <p>For an agent that runs as a server, the app can post each event to a URL instead. Open the agent in the app, turn on <strong>Send a webhook</strong> under <strong>New messages</strong>, enter the address and click <strong>Send test</strong>. The address must be <code>https://</code>, except <code>http://localhost</code>.</p>
+  <p>Each delivery is a <code>POST</code> with the event JSON above as the body, signed in the <a href="https://www.standardwebhooks.com">Standard Webhooks</a> format with the agent's signing secret (<strong>Copy</strong> next to <em>Signing secret</em>):</p>
+  <ul>
+    <li><code>webhook-id</code>: the event's <code>id</code>, the same on every retry</li>
+    <li><code>webhook-timestamp</code>: Unix seconds</li>
+    <li><code>webhook-signature</code>: <code>v1,</code> then the base64 HMAC-SHA256 of <code>{id}.{timestamp}.{body}</code>, keyed with the base64-decoded part of the secret after <code>whsec_</code></li>
+  </ul>
+  <p>Any Standard Webhooks library can check it. Answer with a 2xx status. On a network error, a 5xx, 408 or 429, the app tries again after 5 s, 30 s, 2 minutes and 5 minutes; other answers, including redirects, aren't retried. After 10 events in a row fail, the app turns the webhook off and says why on the agent's page. Events reach each agent's webhook in order, one at a time.</p>
 
   <h2 id="safety">Safety settings</h2>
   <p>The Safety page follows the path a message takes. The card at the top shows that path, with each check lit when it's on, and how many messages were checked and flagged this session.</p>

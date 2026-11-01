@@ -175,7 +175,7 @@ and an agent limited to selected conversations only hears about those:
 }
 ```
 
-Events don't include message text unless it's turned on for that agent in the app. Then
+Events don't include message text unless **Include message text** is on for that agent in the app. Then
 `hint` is replaced by `messages`, a list of `{ts, from, text}` with the same redaction and
 prompt-injection screening as the read tools. Otherwise the agent reads the conversation
 with `get_conversation`, which screens it.
@@ -188,6 +188,27 @@ connection, send the last `id:` you received as the `Last-Event-ID` header (or
 `?after=<id>`); the app keeps the last 500 messages to replay. After a drop you may get a
 few events twice; skip repeats by the JSON `id`. The app sends a `: ping` comment every
 15 seconds and allows 8 open streams at a time.
+
+#### Webhooks
+
+For an agent that runs as a server, the app can post each event to a URL instead. Open the
+agent in the app, turn on **Send a webhook** under **New messages**, enter the address and
+click **Send test**. The address must be `https://`, except `http://localhost`.
+
+Each delivery is a `POST` with the event JSON above as the body, signed in the
+[Standard Webhooks](https://www.standardwebhooks.com) format with the agent's signing
+secret (**Copy** next to *Signing secret*):
+
+- `webhook-id`: the event's `id`, the same on every retry
+- `webhook-timestamp`: Unix seconds
+- `webhook-signature`: `v1,` then the base64 HMAC-SHA256 of `{id}.{timestamp}.{body}`,
+  keyed with the base64-decoded part of the secret after `whsec_`
+
+Any Standard Webhooks library can check it. Answer with a 2xx status. On a network error,
+a 5xx, 408 or 429, the app tries again after 5 s, 30 s, 2 minutes and 5 minutes; other
+answers, including redirects, aren't retried. After 10 events in a row fail, the app turns
+the webhook off and says why on the agent's page. Events reach each agent's webhook in
+order, one at a time.
 
 ### Safety settings
 
