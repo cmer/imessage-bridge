@@ -39,6 +39,8 @@ final class AppState: ObservableObject {
     let service = MessageService()
     /// New messages, as the watcher finds them. The event stream and webhooks subscribe.
     let feed = MessageFeed()
+    /// Posts events to agents' webhooks; its status drives the agent page.
+    private(set) lazy var webhooks = WebhookDispatcher(state: self)
     private var watcher: MessageWatcher?
     nonisolated static let cursorKey = "messageCursor"
     let verdictCache = VerdictCache()
@@ -92,7 +94,9 @@ final class AppState: ObservableObject {
         let now = Date()
         agents = [
             AgentRecord(name: "Grok Bot", tokenHash: "", tokenHint: "x7Qp", canRead: true, canSend: true,
-                        confirmSends: true, createdAt: now.addingTimeInterval(-86400 * 3), lastUsedAt: now.addingTimeInterval(-300)),
+                        confirmSends: true, createdAt: now.addingTimeInterval(-86400 * 3), lastUsedAt: now.addingTimeInterval(-300),
+                        events: { var e = EventSettings(); e.webhookEnabled = true
+                                  e.webhookURL = "https://agent.example.com/hooks/imessage"; return e }()),
             AgentRecord(name: "Claude Code", tokenHash: "", tokenHint: "M2kd", canRead: true, canSend: false,
                         chatAccess: .selected, allowedChats: ["+15555550142", "+15555550188"],
                         createdAt: now.addingTimeInterval(-86400), lastUsedAt: now.addingTimeInterval(-7200)),
@@ -124,6 +128,7 @@ final class AppState: ObservableObject {
     func start() {
         startServers()
         startWatcher()
+        webhooks.start()
         refreshPermissions()
         refreshLaunchAtLogin()
         timers.append(Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { _ in

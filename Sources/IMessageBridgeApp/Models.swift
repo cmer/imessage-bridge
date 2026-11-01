@@ -50,6 +50,8 @@ struct EventSettings: Codable, Equatable {
     var includeText = false
     var webhookEnabled = false
     var webhookURL = ""
+    /// Why the app turned the webhook off (repeated failures), shown until it's turned back on.
+    var webhookDisabledNote: String?
 
     init() {}
 
@@ -59,6 +61,7 @@ struct EventSettings: Codable, Equatable {
         includeText = try c.decodeIfPresent(Bool.self, forKey: .includeText) ?? d.includeText
         webhookEnabled = try c.decodeIfPresent(Bool.self, forKey: .webhookEnabled) ?? d.webhookEnabled
         webhookURL = try c.decodeIfPresent(String.self, forKey: .webhookURL) ?? d.webhookURL
+        webhookDisabledNote = try c.decodeIfPresent(String.self, forKey: .webhookDisabledNote)
     }
 }
 
