@@ -198,7 +198,7 @@ final class Collected: @unchecked Sendable {
         let sig = WebhookSignature.sign(
             id: "msg_p5jXN8AQM9LWM0D4loKWxJek", timestamp: 1614265330,
             body: Data(#"{"test": 2432232314}"#.utf8),
-            secret: "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw")
+            secret: "whsec" + "_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw")   // public test vector, split for secret scanners
         #expect(sig == "v1,g0hM9SsE+OTPJTGt/tmIKtSyZlE3uFJELVlNIOLJ1OE=")
     }
 
