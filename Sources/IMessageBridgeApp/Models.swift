@@ -20,6 +20,13 @@ struct AgentRecord: Codable, Identifiable, Equatable {
     var allowedChats: [String] = []
     var createdAt = Date()
     var lastUsedAt: Date?
+    /// New-message events. Optional so configs from before events keep loading.
+    var events: EventSettings?
+
+    var eventSettings: EventSettings {
+        get { events ?? EventSettings() }
+        set { events = newValue }
+    }
 
     var scope: ReadScope {
         ReadScope(allowedChats: chatAccess == .all ? nil : Set(allowedChats), redact: redactSensitive)
@@ -33,6 +40,25 @@ struct AgentRecord: Codable, Identifiable, Equatable {
         if chatAccess == .selected { parts.append("\(allowedChats.count) chats") }
         if allowNetwork { parts.append("network") }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// How an agent hears about new messages: a stream it connects to
+/// (GET /v1/events, any agent that can read), and optionally a webhook.
+struct EventSettings: Codable, Equatable {
+    /// Put message text (redacted and screened) in events, not just who wrote.
+    var includeText = false
+    var webhookEnabled = false
+    var webhookURL = ""
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = EventSettings()
+        includeText = try c.decodeIfPresent(Bool.self, forKey: .includeText) ?? d.includeText
+        webhookEnabled = try c.decodeIfPresent(Bool.self, forKey: .webhookEnabled) ?? d.webhookEnabled
+        webhookURL = try c.decodeIfPresent(String.self, forKey: .webhookURL) ?? d.webhookURL
     }
 }
 

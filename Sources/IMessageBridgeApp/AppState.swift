@@ -37,6 +37,10 @@ final class AppState: ObservableObject {
     private var modelInstaller: PromptGuardInstaller?
 
     let service = MessageService()
+    /// New messages, as the watcher finds them. The event stream and webhooks subscribe.
+    let feed = MessageFeed()
+    private var watcher: MessageWatcher?
+    nonisolated static let cursorKey = "messageCursor"
     let verdictCache = VerdictCache()
     static let taintDuration: TimeInterval = 30 * 60
     let supportDir: URL
@@ -119,6 +123,7 @@ final class AppState: ObservableObject {
 
     func start() {
         startServers()
+        startWatcher()
         refreshPermissions()
         refreshLaunchAtLogin()
         timers.append(Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { _ in
@@ -127,6 +132,23 @@ final class AppState: ObservableObject {
         timers.append(Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
             Task { @MainActor in AppState.shared.expirePairings() }
         })
+    }
+
+    // MARK: New messages
+
+    /// Watches chat.db for new messages and publishes them to `feed`. The
+    /// cursor is saved, so messages that arrived while the app was closed are
+    /// reported at launch (the watcher caps how many and how old).
+    func startWatcher() {
+        guard !isDemo, watcher == nil else { return }
+        let defaults = UserDefaults.standard
+        let saved = defaults.object(forKey: AppState.cursorKey) as? NSNumber
+        let feed = self.feed
+        let w = MessageWatcher(dbPath: service.dbPath, cursor: saved?.int64Value,
+                               onMessages: { feed.publish($0) },
+                               onCursor: { UserDefaults.standard.set(NSNumber(value: $0), forKey: AppState.cursorKey) })
+        w.start()
+        watcher = w
     }
 
     // MARK: Persistence
