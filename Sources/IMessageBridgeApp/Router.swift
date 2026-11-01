@@ -32,6 +32,8 @@ final class Router {
         case ("GET", _) where req.path.hasPrefix("/v1/pair/"): return await poll(req)
         case ("POST", "/mcp"): return await mcp(req)
         case (_, "/mcp"): return HTTPResponse(status: 405, headers: ["Allow": "POST"])
+        case ("GET", "/v1/events"): return await events(req)
+        case (_, "/v1/events"): return HTTPResponse(status: 405, headers: ["Allow": "GET"])
         default: return .error(404, "Not found.")
         }
     }
@@ -91,19 +93,32 @@ final class Router {
 
     // MARK: MCP
 
-    private func mcp(_ req: HTTPRequest) async -> HTTPResponse {
-        let agent: AgentRecord
+    private enum Authorization {
+        case agent(AgentRecord)
+        case denied(HTTPResponse)
+    }
+
+    /// The agent behind the request's bearer token, or the error response to send.
+    private func authorize(_ req: HTTPRequest) async -> Authorization {
         switch await state.authenticate(req.bearerToken, isNetwork: req.isNetwork) {
         case .ok(let a):
-            agent = a
+            return .agent(a)
         case .missing:
-            return .error(401, "Missing bearer token. Pair first: imessage-bridge pair --name <agent>",
-                          headers: ["WWW-Authenticate": "Bearer realm=\"imessage-bridge\""])
+            return .denied(.error(401, "Missing bearer token. Pair first: imessage-bridge pair --name <agent>",
+                                  headers: ["WWW-Authenticate": "Bearer realm=\"imessage-bridge\""]))
         case .invalid:
-            return .error(401, "Token not recognized. It may have been revoked; pair again.",
-                          headers: ["WWW-Authenticate": "Bearer realm=\"imessage-bridge\""])
+            return .denied(.error(401, "Token not recognized. It may have been revoked; pair again.",
+                                  headers: ["WWW-Authenticate": "Bearer realm=\"imessage-bridge\""]))
         case .networkNotAllowed(let name):
-            return .error(403, "\(name) is not allowed to connect over the network. Enable it in the app.")
+            return .denied(.error(403, "\(name) is not allowed to connect over the network. Enable it in the app."))
+        }
+    }
+
+    private func mcp(_ req: HTTPRequest) async -> HTTPResponse {
+        let agent: AgentRecord
+        switch await authorize(req) {
+        case .agent(let a): agent = a
+        case .denied(let resp): return resp
         }
 
         let parsed = try? JSONSerialization.jsonObject(with: req.body)
@@ -148,6 +163,9 @@ final class Router {
             if agent.confirmSends { s += "The user must also approve every send in a dialog on the Mac. " }
         } else {
             s += "This agent cannot send messages. "
+        }
+        if agent.canRead {
+            s += "To follow new messages as they arrive, run `imessage-bridge watch --agent \"\(agent.name)\"`; it prints one JSON line per new-message event. "
         }
         return s
     }
@@ -263,6 +281,107 @@ final class Router {
 
     private func detached<T>(_ work: @escaping () -> T) async -> T {
         await Task.detached(priority: .userInitiated) { work() }.value
+    }
+
+    // MARK: Events
+
+    /// GET /v1/events: new incoming messages as Server-Sent Events. Resumes
+    /// after `Last-Event-ID` (or `?after=<row>`) from the feed's buffer.
+    private func events(_ req: HTTPRequest) async -> HTTPResponse {
+        let agent: AgentRecord
+        switch await authorize(req) {
+        case .agent(let a): agent = a
+        case .denied(let resp): return resp
+        }
+        guard agent.canRead else {
+            return .error(403, "\(agent.name) can't read messages. Turn on read access in the app.")
+        }
+        let after = (req.headers["last-event-id"] ?? req.query["after"])
+            .flatMap { Int64($0.trimmingCharacters(in: .whitespaces)) }
+        let isNetwork = req.isNetwork
+        let remote = req.remote
+        return .streaming(headers: ["Content-Type": "text/event-stream", "Cache-Control": "no-store"]) { [self] stream in
+            await streamEvents(to: stream, agentID: agent.id, isNetwork: isNetwork, remote: remote, after: after)
+        }
+    }
+
+    private func streamEvents(to stream: HTTPStream, agentID: UUID, isNetwork: Bool, remote: String, after: Int64?) async {
+        let feed = await MainActor.run { state.feed }
+        // Where a new client would resume. Read before subscribing, so anything
+        // published in between is both above it and in `batches`.
+        let startRow = after == nil ? feed.messages(afterRowID: 0).last?.rowID : nil
+        // Subscribe before reading the buffer so nothing falls between the two;
+        // rows already sent are skipped below.
+        let (batches, input) = AsyncStream<[Message]>.makeStream(bufferingPolicy: .bufferingNewest(50))
+        let sub = feed.subscribe { input.yield($0) }
+        stream.onClose { input.finish() }
+        defer { feed.unsubscribe(sub) }
+
+        guard let agent = await currentAgent(agentID, isNetwork: isNetwork) else { return }
+        await MainActor.run {
+            let from = isNetwork ? "from \(remote)" : "on this Mac"
+            state.log(agent: agent.name, action: "events_connected",
+                      detail: "event stream \(from)" + (after.map { ", resuming after \($0)" } ?? ""), ok: true)
+        }
+        stream.write(SSE.comment("connected"))
+        if let startRow { stream.write(SSE.id(String(startRow))) }
+
+        // Keep-alive, which also ends the stream soon after access is revoked.
+        let pinger = Task { [self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 15_000_000_000)
+                guard !Task.isCancelled else { return }
+                guard await currentAgent(agentID, isNetwork: isNetwork) != nil else { stream.close(); return }
+                guard stream.write(SSE.comment("ping")) else { return }
+            }
+        }
+        defer { pinger.cancel() }
+
+        var last = after ?? 0
+        if let after {
+            let replay = feed.messages(afterRowID: after)
+            if let newest = replay.map(\.rowID).max() {
+                guard await deliver(replay, through: newest, to: stream, agentID: agentID, isNetwork: isNetwork) else { return }
+                last = newest
+            }
+        }
+        for await batch in batches {
+            let fresh = batch.filter { $0.rowID > last }
+            guard let newest = fresh.map(\.rowID).max() else { continue }
+            guard await deliver(fresh, through: newest, to: stream, agentID: agentID, isNetwork: isNetwork) else { return }
+            last = newest
+        }
+    }
+
+    /// The agent as it is now, if it may still use the stream.
+    private func currentAgent(_ id: UUID, isNetwork: Bool) async -> AgentRecord? {
+        await MainActor.run {
+            guard let a = state.agents.first(where: { $0.id == id }), a.canRead,
+                  !isNetwork || a.allowNetwork else { return nil }
+            return a
+        }
+    }
+
+    /// Writes one batch's events. False when the stream should end.
+    private func deliver(_ msgs: [Message], through row: Int64, to stream: HTTPStream,
+                         agentID: UUID, isNetwork: Bool) async -> Bool {
+        // Re-read the agent each time: its scope, text setting or access may have changed.
+        let current = await MainActor.run { () -> (AgentRecord, ReadScope)? in
+            guard let a = state.agents.first(where: { $0.id == agentID }), a.canRead,
+                  !isNetwork || a.allowNetwork else { return nil }
+            return (a, state.scope(for: a))
+        }
+        guard let (agent, scope) = current else {
+            stream.write(SSE.comment("access revoked"))
+            return false
+        }
+        let service = self.service
+        let includeText = agent.eventSettings.includeText
+        guard let events = try? await detached({ try service.events(for: msgs, scope: scope, includeText: includeText) }) else {
+            return stream.write(SSE.comment("could not read new messages"))
+        }
+        guard !events.isEmpty else { return !stream.isClosed }
+        return stream.write(SSE.frames(for: events, batchLastRow: row))
     }
 
     // MARK: JSON-RPC helpers

@@ -26,6 +26,7 @@
     <li><a href="#connect">Connecting MCP clients</a></li>
     <li><a href="#permissions">Agent permissions</a></li>
     <li><a href="#tools">MCP tools</a></li>
+    <li><a href="#events">New-message events</a></li>
     <li><a href="#safety">Safety settings</a></li>
     <li><a href="#network">Network access</a></li>
     <li><a href="#cli">CLI reference</a></li>
@@ -103,6 +104,31 @@ imessage-bridge call --agent grok-bot send_message '{"to": "+15555550142", "text
   </table>
   </div>
 
+  <h2 id="events">New-message events</h2>
+  <p>An agent with read access can follow incoming messages as they arrive instead of polling:</p>
+  <pre><code>imessage-bridge watch --agent claude-code          # one JSON line per event, until stopped
+imessage-bridge watch --agent claude-code --once   # wait for the next event, print it, exit</code></pre>
+  <p><code>watch</code> reconnects on its own (waiting 1 s, then longer, up to 30 s) and picks up where it left off. It exits with an error if the token is revoked or the agent loses read access.</p>
+  <p>An event covers the new messages in one conversation. Your own messages aren't events, and an agent limited to selected conversations only hears about those:</p>
+  <pre><code>{
+  "id": "msg_48213",
+  "type": "message.received",
+  "created_at": "2026-11-01T15:04:13-06:00",
+  "data": {
+    "chat": "Sam Rivera",
+    "chat_id": "+15555550142",
+    "is_group": false,
+    "count": 2,
+    "from": ["Sam Rivera"],
+    "message_ids": [48212, 48213],
+    "first_ts": "2026-11-01T15:04:02-06:00",
+    "last_ts": "2026-11-01T15:04:11-06:00",
+    "hint": "Read them with get_conversation, passing chat_id as chat."
+  }
+}</code></pre>
+  <p>Events don't include message text unless it's turned on for that agent in the app. Then <code>hint</code> is replaced by <code>messages</code>, a list of <code>{ts, from, text}</code> with the same redaction and prompt-injection screening as the read tools. Otherwise the agent reads the conversation with <code>get_conversation</code>, which screens it.</p>
+  <p>Under the hood, <code>watch</code> reads <code>GET /v1/events</code> (on port 7542, or 7543 with network access), a <a href="https://html.spec.whatwg.org/multipage/server-sent-events.html">Server-Sent Events</a> stream that takes the same bearer token as <code>/mcp</code>. Each event is sent as <code>event: message.received</code> with the JSON above as <code>data</code>. To resume after a dropped connection, send the last <code>id:</code> you received as the <code>Last-Event-ID</code> header (or <code>?after=&lt;id&gt;</code>); the app keeps the last 500 messages to replay. After a drop you may get a few events twice; skip repeats by the JSON <code>id</code>. The app sends a <code>: ping</code> comment every 15 seconds and allows 8 open streams at a time.</p>
+
   <h2 id="safety">Safety settings</h2>
   <p>The Safety page follows the path a message takes. The card at the top shows that path, with each check lit when it's on, and how many messages were checked and flagged this session.</p>
 
@@ -143,6 +169,7 @@ imessage-bridge call --agent grok-bot send_message '{"to": "+15555550142", "text
 imessage-bridge mcp --agent &lt;agent&gt;                        # stdio MCP server for clients
 imessage-bridge call --agent &lt;agent&gt; [tool key=value …]    # one tool call, no MCP client needed
 imessage-bridge call --agent &lt;agent&gt; tool '{"key": "value"}' # same, arguments as JSON
+imessage-bridge watch --agent &lt;agent&gt; [--once]             # new-message events as JSON lines
 imessage-bridge config --agent &lt;agent&gt;                     # print client setup snippets
 imessage-bridge status [--agent &lt;agent&gt;]
 imessage-bridge agents
