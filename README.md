@@ -141,6 +141,76 @@ never logged.
 
 Agents only see the tools they're allowed to use.
 
+### New-message events
+
+An agent with read access can follow incoming messages as they arrive instead of polling:
+
+```bash
+imessage-bridge watch --agent claude-code          # one JSON line per event, until stopped
+imessage-bridge watch --agent claude-code --once   # wait for the next event, print it, exit
+```
+
+`watch` reconnects on its own (waiting 1 s, then longer, up to 30 s) and picks up where it
+left off. It exits with an error if the token is revoked or the agent loses read access.
+
+An event covers the new messages in one conversation. Your own messages aren't events,
+and an agent limited to selected conversations only hears about those:
+
+```json
+{
+  "id": "msg_48213",
+  "type": "message.received",
+  "created_at": "2026-11-01T15:04:13-06:00",
+  "data": {
+    "chat": "Sam Rivera",
+    "chat_id": "+15555550142",
+    "is_group": false,
+    "count": 2,
+    "from": ["Sam Rivera"],
+    "message_ids": [48212, 48213],
+    "first_ts": "2026-11-01T15:04:02-06:00",
+    "last_ts": "2026-11-01T15:04:11-06:00",
+    "hint": "Read them with get_conversation, passing chat_id as chat."
+  }
+}
+```
+
+Events don't include message text unless **Include message text** is on for that agent in the app. Then
+`hint` is replaced by `messages`, a list of `{ts, from, text}` with the same redaction and
+prompt-injection screening as the read tools. Otherwise the agent reads the conversation
+with `get_conversation`, which screens it.
+
+Under the hood, `watch` reads `GET /v1/events` (on port 7542, or 7543 with network access),
+a [Server-Sent Events](https://html.spec.whatwg.org/multipage/server-sent-events.html)
+stream that takes the same bearer token as `/mcp`. Each event is sent as
+`event: message.received` with the JSON above as `data`. To resume after a dropped
+connection, send the last `id:` you received as the `Last-Event-ID` header (or
+`?after=<id>`); the app keeps the last 500 messages to replay. After a drop you may get a
+few events twice; skip repeats by the JSON `id`. The app sends a `: ping` comment every
+15 seconds and allows 8 open streams at a time.
+
+#### Webhooks
+
+For an agent that runs as a server, the app can post each event to a URL instead. Open the
+agent in the app, turn on **Send a webhook** under **New messages**, enter the address and
+click **Send test**. The address must be `https://`, except `http://localhost`.
+
+Each delivery is a `POST` with the event JSON above as the body, signed in the
+[Standard Webhooks](https://www.standardwebhooks.com) format with the agent's signing
+secret (**Copy** next to *Signing secret*):
+
+- `webhook-id`: the event's `id`, the same on every retry
+- `webhook-timestamp`: Unix seconds
+- `webhook-signature`: `v1,` then the base64 HMAC-SHA256 of `{id}.{timestamp}.{body}`,
+  keyed with the base64-decoded part of the secret after `whsec_`
+
+Any Standard Webhooks library can check it. Answer with a 2xx status; anything else,
+including a redirect or a network error, is a failure. The app retries the same event
+after 5 s, 30 s, 2 minutes, then every 5 minutes, and newer events wait behind it so they
+arrive in order. If the receiver is still failing 15 minutes after the first failure, the
+app turns the webhook off, drops the waiting events and says why on the agent's page. An
+HTTP 410 (Gone) turns it off right away.
+
 ### Safety settings
 
 The **Safety** page follows the path a message takes. The card at the top shows that path
@@ -208,6 +278,7 @@ imessage-bridge pair --name <agent> [--read] [--send] [--url URL --fingerprint F
 imessage-bridge mcp --agent <agent>          # stdio MCP server for clients
 imessage-bridge call --agent <agent> [tool key=value …]   # one tool call, no MCP client needed
 imessage-bridge call --agent <agent> tool '{"key": "value"}'  # same, arguments as JSON
+imessage-bridge watch --agent <agent> [--once]   # new-message events as JSON lines
 imessage-bridge config --agent <agent>       # print client setup snippets
 imessage-bridge status [--agent <agent>]
 imessage-bridge agents | forget --agent <agent>

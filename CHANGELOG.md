@@ -6,6 +6,12 @@ and uses it as the GitHub release notes.
 
 ## Unreleased
 
+### Added
+- Agents can hear about new messages as they arrive, instead of having to check. Run
+  `imessage-bridge watch` to follow them, or set a webhook for an agent in its settings.
+  By default an agent is only told who wrote and in which chat, and reads the messages
+  itself so they're screened as usual. You can choose to send the text too.
+
 ## 0.9.2 - 2026-10-31
 
 ### Changed

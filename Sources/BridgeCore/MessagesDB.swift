@@ -50,45 +50,58 @@ public final class MessagesDB {
         Int64((date.timeIntervalSince1970 - appleEpoch) * 1_000_000_000)
     }
 
+    static let messageColumns = """
+        SELECT m.ROWID, c.ROWID, c.chat_identifier, m.date, m.is_from_me,
+               COALESCE(h.id, ''), m.text, m.attributedBody,
+               COALESCE(m.cache_has_attachments, 0)
+        FROM message m
+        JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+        JOIN chat c ON c.ROWID = cmj.chat_id
+        LEFT JOIN handle h ON h.ROWID = m.handle_id
+        WHERE COALESCE(m.associated_message_type, 0) NOT BETWEEN 2000 AND 3999
+          AND COALESCE(m.item_type, 0) = 0
+        """
+
     public func messages(since: Date, chatRowIDs: [Int64]? = nil) throws -> [Message] {
-        var sql = """
-            SELECT m.ROWID, c.ROWID, c.chat_identifier, m.date, m.is_from_me,
-                   COALESCE(h.id, ''), m.text, m.attributedBody,
-                   COALESCE(m.cache_has_attachments, 0)
-            FROM message m
-            JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
-            JOIN chat c ON c.ROWID = cmj.chat_id
-            LEFT JOIN handle h ON h.ROWID = m.handle_id
-            WHERE m.date > ?
-              AND COALESCE(m.associated_message_type, 0) NOT BETWEEN 2000 AND 3999
-              AND COALESCE(m.item_type, 0) = 0
-            """
+        var sql = MessagesDB.messageColumns + " AND m.date > ?"
         if let ids = chatRowIDs {
             if ids.isEmpty { return [] }
             sql += " AND c.ROWID IN (" + ids.map(String.init).joined(separator: ",") + ")"
         }
         sql += " ORDER BY m.date ASC"
+        return try db.query(sql, [.int(MessagesDB.appleNanos(from: since))]).compactMap(MessagesDB.message)
+    }
 
-        var out: [Message] = []
-        for r in try db.query(sql, [.int(MessagesDB.appleNanos(from: since))]) {
-            var text = r[6].string
-            if text.isEmpty { text = AttributedBody.decode(r[7].data) }
-            let hasAttachment = r[8].int64 != 0 || text.contains("\u{FFFC}")
-            text = text.replacingOccurrences(of: "\u{FFFC}", with: "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if text.isEmpty && !hasAttachment { continue }
-            out.append(Message(
-                rowID: r[0].int64,
-                chatRowID: r[1].int64,
-                chatIdentifier: r[2].string,
-                date: MessagesDB.date(fromApple: r[3].int64),
-                isFromMe: r[4].int64 != 0,
-                sender: r[5].string,
-                text: text,
-                hasAttachment: hasAttachment
-            ))
-        }
-        return out
+    /// Messages with row IDs in `(after, through]`, oldest first. Row IDs only
+    /// grow, unlike dates, which can arrive out of order when other devices
+    /// sync. When there are more than `limit`, the newest `limit` are returned.
+    public func messages(afterRowID after: Int64, through: Int64, limit: Int = 500) throws -> [Message] {
+        let sql = MessagesDB.messageColumns + " AND m.ROWID > ? AND m.ROWID <= ? ORDER BY m.ROWID DESC LIMIT \(max(1, limit))"
+        return try db.query(sql, [.int(after), .int(through)]).compactMap(MessagesDB.message).reversed()
+    }
+
+    /// The highest message row ID, or 0 for an empty database.
+    public func maxMessageRowID() throws -> Int64 {
+        try db.query("SELECT COALESCE(MAX(ROWID), 0) FROM message").first?.first?.int64 ?? 0
+    }
+
+    static func message(_ r: [SQLValue]) -> Message? {
+        var text = r[6].string
+        if text.isEmpty { text = AttributedBody.decode(r[7].data) }
+        let hasAttachment = r[8].int64 != 0 || text.contains("\u{FFFC}")
+        text = text.replacingOccurrences(of: "\u{FFFC}", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.isEmpty && !hasAttachment { return nil }
+        return Message(
+            rowID: r[0].int64,
+            chatRowID: r[1].int64,
+            chatIdentifier: r[2].string,
+            date: MessagesDB.date(fromApple: r[3].int64),
+            isFromMe: r[4].int64 != 0,
+            sender: r[5].string,
+            text: text,
+            hasAttachment: hasAttachment
+        )
     }
 
     public func chats() throws -> [ChatInfo] {
