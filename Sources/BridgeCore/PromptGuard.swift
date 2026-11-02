@@ -51,7 +51,10 @@ public final class PromptGuard: LocalInjectionClassifier, @unchecked Sendable {
     let embeddingDim: Int
     private let lock = NSLock()
 
-    public init(directory: URL, computeUnits: MLComputeUnits = .cpuAndGPU) throws {
+    /// CPU only by default: on macOS 26.4 the GPU path aborts the process inside
+    /// Metal's graph compiler ("MLIR pass manager failed") on the first score, and
+    /// an 86M-parameter model over a few hundred tokens is fast enough on the CPU.
+    public init(directory: URL, computeUnits: MLComputeUnits = .cpuOnly) throws {
         let config = MLModelConfiguration()
         config.computeUnits = computeUnits
         do {
