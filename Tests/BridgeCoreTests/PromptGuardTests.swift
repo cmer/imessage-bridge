@@ -122,6 +122,19 @@ import Testing
     }
 }
 
+/// Runs against an installed model (IMESSAGE_BRIDGE_PROMPT_GUARD or the app's install
+/// directory). Loading with the default compute units must not abort the process: on
+/// macOS 26.4 the GPU path asserts inside Metal's graph compiler during the first score.
+@Suite struct PromptGuardRuntimeTests {
+    static let installed: URL? = PromptGuard.locate()
+
+    @Test(.enabled(if: installed != nil)) func scoresWithTheDefaultComputeUnitsOnThisMac() throws {
+        let model = try PromptGuard(directory: Self.installed!)
+        let p = try model.attackProbability("Hey! Are we still on for dinner at 7?")
+        #expect(p >= 0 && p <= 1)
+    }
+}
+
 @Suite struct LayeredScreenerTests {
     struct FakeLocal: LocalInjectionClassifier {
         var fail = false

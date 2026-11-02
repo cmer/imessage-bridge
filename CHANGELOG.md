@@ -6,6 +6,9 @@ and uses it as the GitHub release notes.
 
 ## Unreleased
 
+### Fixed
+- Installing the on-device model no longer crashes the app at the end of the download on macOS 26.4; the model now runs on the CPU.
+
 ## 0.9.2 - 2026-10-31
 
 ### Changed
