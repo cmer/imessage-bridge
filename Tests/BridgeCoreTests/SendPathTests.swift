@@ -110,3 +110,19 @@ import Testing
         #expect(SendPath.verifiedRow(text: "On my way", baseline: 100, rows: rows)?.rowID == 101)
     }
 }
+
+@Suite struct SendPathServiceParamTests {
+    @Test func omittedServiceMeansAuto() throws {
+        #expect(try Validate.service(nil) == nil)
+        #expect(try Validate.service(NSNull()) == nil)
+    }
+
+    @Test func explicitServiceIsKept() throws {
+        #expect(try Validate.service("SMS") == "SMS")
+        #expect(try Validate.service("iMessage") == "iMessage")
+    }
+
+    @Test func unknownServiceIsRejected() {
+        #expect(throws: BridgeError.self) { try Validate.service("RCS") }
+    }
+}

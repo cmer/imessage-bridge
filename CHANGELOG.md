@@ -12,6 +12,15 @@ and uses it as the GitHub release notes.
   By default an agent is only told who wrote and in which chat, and reads the messages
   itself so they're screened as usual. You can choose to send the text too.
 
+### Changed
+- Sending now goes into the existing conversation with the recipient, so Messages picks
+  iMessage, RCS or SMS itself. On macOS 26 the old way reported success to Android numbers
+  without delivering anything.
+- A send is reported as sent only after the Mac's message database shows the outbound
+  message. The result says which service carried it; an error means nothing was delivered.
+- The `service` option on send_message is now optional and only forces a service; left
+  unset, the existing conversation decides.
+
 ## 0.9.2 - 2026-10-31
 
 ### Changed

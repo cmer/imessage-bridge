@@ -96,11 +96,11 @@ enum Tools {
         [
             "name": "send_message",
             "title": "Send an iMessage",
-            "description": "Send a plain-text message to one phone number or email address. Group chats are not supported. Show the user the exact text before calling. Depending on settings, the user may have to approve the send on the Mac; if they decline, nothing is sent.",
+            "description": "Send a plain-text message to one phone number or email address. Group chats are not supported. Show the user the exact text before calling. The message goes into the existing conversation when there is one, so Messages picks iMessage, RCS or SMS itself; the result reports the service used and is returned only after the Mac's message database confirms the send. An error means nothing was delivered. Depending on settings, the user may have to approve the send on the Mac; if they decline, nothing is sent.",
             "inputSchema": schema([
                 "to": ["type": "string", "description": "Recipient phone number (with area code) or email address."],
                 "text": ["type": "string", "description": "Message body, up to 4000 characters."],
-                "service": ["type": "string", "enum": ["iMessage", "SMS"], "description": "Default iMessage."],
+                "service": ["type": "string", "enum": ["iMessage", "SMS"], "description": "Force a service instead of using the existing conversation. Leave unset normally."],
             ], required: ["to", "text"]),
             "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": true],
         ],

@@ -253,7 +253,7 @@ final class Router {
         let reasons = warnings
         if agent.confirmSends || !reasons.isEmpty {
             let result = await MainActor.run {
-                Messaging.confirmSend(agent: agent.name, to: to, name: name, service: svc, text: text,
+                Messaging.confirmSend(agent: agent.name, to: to, name: name, service: svc ?? "auto (existing conversation)", text: text,
                                       warnings: reasons, offerAllowRecipient: unknownRecipient,
                                       offerStopAsking: agent.confirmSends)
             }
@@ -271,8 +271,9 @@ final class Router {
                 await MainActor.run { state.stopConfirmingSends(agent.id) }
             }
         }
-        try await MainActor.run { try Messaging.send(to: to, text: text, service: svc) }
-        return ["sent": true, "to": to, "name": name ?? "", "service": svc, "characters": text.count]
+        let outcome = try await Messaging.send(to: to, text: text, requested: svc, dbPath: service.dbPath)
+        return ["sent": true, "verified": true, "to": to, "name": name ?? "", "service": outcome.serviceUsed,
+                "method": outcome.method, "attempts": outcome.attempts, "characters": text.count]
     }
 
     private func detached<T>(_ work: @escaping () throws -> T) async throws -> T {
