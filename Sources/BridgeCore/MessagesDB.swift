@@ -80,7 +80,8 @@ public final class MessagesDB {
         return try db.query(sql, [.int(after), .int(through)]).compactMap(MessagesDB.message).reversed()
     }
 
-    /// The highest message row ID, or 0 for an empty database.
+    /// The highest message row ID, or 0 for an empty database. Also the baseline a send
+    /// is verified against.
     public func maxMessageRowID() throws -> Int64 {
         try db.query("SELECT COALESCE(MAX(ROWID), 0) FROM message").first?.first?.int64 ?? 0
     }
@@ -102,6 +103,57 @@ public final class MessagesDB {
             text: text,
             hasAttachment: hasAttachment
         )
+    }
+
+    // MARK: Send-path reads
+
+    /// Messages written after `baseline`, oldest first, with the columns that prove
+    /// whether an outbound send really happened.
+    public func outboundRows(after baseline: Int64) throws -> [SendPath.OutboundRow] {
+        try db.query("""
+            SELECT ROWID, COALESCE(is_from_me, 0), COALESCE(text, ''), attributedBody,
+                   COALESCE(error, 0), COALESCE(service, '')
+            FROM message WHERE ROWID > ? ORDER BY ROWID ASC
+            """, [.int(baseline)]).map { r in
+            var text = r[2].string
+            if text.isEmpty { text = AttributedBody.decode(r[3].data) }
+            return SendPath.OutboundRow(rowID: r[0].int64, isFromMe: r[1].int64 != 0, text: text,
+                                        error: r[4].int64, service: r[5].string)
+        }
+    }
+
+    /// (handle ROWID, service) for every stored handle that is this recipient.
+    private func handles(for recipient: String) throws -> [(Int64, String)] {
+        try db.query("SELECT ROWID, id, COALESCE(service, '') FROM handle")
+            .filter { SendPath.sameHandle($0[1].string, recipient) }
+            .map { ($0[0].int64, $0[2].string) }
+    }
+
+    /// Distinct services chat.db has handle rows for, for this recipient.
+    public func handleServices(for recipient: String) throws -> [String] {
+        var seen: [String] = []
+        for (_, s) in try handles(for: recipient) where !s.isEmpty && !seen.contains(s) { seen.append(s) }
+        return seen
+    }
+
+    /// Service of the newest message exchanged with this recipient, if any.
+    public func recentService(for recipient: String) throws -> String? {
+        let ids = try handles(for: recipient).map { String($0.0) }
+        if ids.isEmpty { return nil }
+        let r = try db.query("""
+            SELECT COALESCE(service, '') FROM message
+            WHERE handle_id IN (\(ids.joined(separator: ","))) ORDER BY date DESC LIMIT 1
+            """)
+        let s = r.first?[0].string ?? ""
+        return s.isEmpty ? nil : s
+    }
+
+    /// The chat's real GUID, read rather than built from the handle, because stored
+    /// handles carry suffixes that string construction would mangle.
+    public func chatGUID(rowID: Int64) throws -> String? {
+        let r = try db.query("SELECT guid FROM chat WHERE ROWID = ?", [.int(rowID)])
+        guard let g = r.first?[0].string, !g.isEmpty else { return nil }
+        return g
     }
 
     public func chats() throws -> [ChatInfo] {

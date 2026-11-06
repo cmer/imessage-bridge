@@ -154,16 +154,115 @@ enum Messaging {
         return (alert, boxes)
     }
 
-    static func send(to: String, text: String, service: String) throws {
-        let svc = service == "SMS" ? "SMS" : "iMessage"
-        let script = """
-            set msgBody to "\(escape(text))"
-            tell application "Messages"
-                set svc to 1st service whose service type = \(svc)
-                send msgBody to buddy "\(escape(to))" of svc
-            end tell
-            """
-        guard let apple = NSAppleScript(source: script) else {
+    struct SendOutcome {
+        let serviceUsed: String
+        let method: String
+        let attempts: [[String: Any]]
+    }
+
+    private struct Attempt {
+        let record: [String: Any]
+        let row: SendPath.OutboundRow?
+        let stop: Error?
+    }
+
+    /// How long to wait for chat.db to show the outbound row before calling a send unproven.
+    static let verifyTimeout: TimeInterval = 12
+
+    /// Sends into the recipient's existing 1:1 chat when there is one (Messages picks
+    /// iMessage, RCS or SMS itself), else to the participant on each service in turn.
+    /// Succeeds only when chat.db shows the outbound row with error 0: on macOS 26
+    /// osascript reports success to Android numbers without delivering anything.
+    static func send(to: String, text: String, requested: String?, dbPath: String) async throws -> SendOutcome {
+        let db = try MessagesDB(path: dbPath)
+        let baseline = try db.maxMessageRowID()
+        var attempts: [[String: Any]] = []
+
+        if requested == nil, let chat = SendPath.directChat(for: to, in: try db.chats()),
+           let guid = try db.chatGUID(rowID: chat.rowID) {
+            let a = await attempt(method: "chat", service: chat.service.isEmpty ? "auto" : chat.service,
+                                  script: chatScript(guid: guid, text: text), db: db, baseline: baseline, text: text)
+            attempts.append(a.record)
+            if let row = a.row {
+                return SendOutcome(serviceUsed: row.service.isEmpty ? chat.service : row.service, method: "chat", attempts: attempts)
+            }
+            if let stop = a.stop { throw stop }
+        }
+
+        let order = SendPath.fallbackOrder(recipient: to, handleServices: try db.handleServices(for: to),
+                                           recentService: try db.recentService(for: to), requested: requested)
+        var tried: Set<String> = []
+        for svc in order {
+            // RCS rides the SMS account in AppleScript; Messages upgrades it on its own.
+            let account = svc == "iMessage" ? "iMessage" : "SMS"
+            guard tried.insert(account).inserted else { continue }
+            let a = await attempt(method: "participant", service: svc,
+                                  script: participantScript(to: to, text: text, account: account),
+                                  db: db, baseline: baseline, text: text)
+            attempts.append(a.record)
+            if let row = a.row {
+                return SendOutcome(serviceUsed: row.service.isEmpty ? svc : row.service, method: "participant", attempts: attempts)
+            }
+            if let stop = a.stop { throw stop }
+        }
+        let summary = attempts.map { "\($0["method"] ?? "?")/\($0["service"] ?? "?"): \($0["detail"] ?? "no outbound row")" }
+            .joined(separator: "; ")
+        throw BridgeError.failed("Messages did not confirm the send (no matching outbound message in chat.db within \(Int(verifyTimeout))s). Treat it as NOT sent. Tried \(summary). Check Messages on the Mac before retrying.")
+    }
+
+    private static func attempt(method: String, service: String, script: String, db: MessagesDB,
+                                baseline: Int64, text: String) async -> Attempt {
+        var record: [String: Any] = ["method": method, "service": service]
+        do {
+            try await MainActor.run { try runScript(script) }
+        } catch {
+            record["ok"] = false
+            record["detail"] = error.localizedDescription
+            if case BridgeError.forbidden = error { return Attempt(record: record, row: nil, stop: error) }
+            return Attempt(record: record, row: nil, stop: nil)
+        }
+        let row = await verify(text: text, baseline: baseline, db: db)
+        record["ok"] = row != nil
+        record["verified"] = row != nil
+        if row == nil { record["detail"] = "Messages accepted the script but no outbound message appeared" }
+        return Attempt(record: record, row: row, stop: nil)
+    }
+
+    /// Polls chat.db until an outbound row proves the send, or the timeout passes.
+    private static func verify(text: String, baseline: Int64, db: MessagesDB) async -> SendPath.OutboundRow? {
+        let deadline = Date().addingTimeInterval(verifyTimeout)
+        while Date() < deadline {
+            if let rows = try? db.outboundRows(after: baseline),
+               let hit = SendPath.verifiedRow(text: text, baseline: baseline, rows: rows) {
+                return hit
+            }
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+        return nil
+    }
+
+    private static func chatScript(guid: String, text: String) -> String {
+        """
+        set msgBody to "\(escape(text))"
+        tell application "Messages"
+            send msgBody to chat id "\(escape(guid))"
+        end tell
+        """
+    }
+
+    private static func participantScript(to: String, text: String, account: String) -> String {
+        """
+        set msgBody to "\(escape(text))"
+        tell application "Messages"
+            set svc to 1st service whose service type = \(account)
+            send msgBody to buddy "\(escape(to))" of svc
+        end tell
+        """
+    }
+
+    @MainActor
+    private static func runScript(_ source: String) throws {
+        guard let apple = NSAppleScript(source: source) else {
             throw BridgeError.failed("could not build the AppleScript")
         }
         var err: NSDictionary?

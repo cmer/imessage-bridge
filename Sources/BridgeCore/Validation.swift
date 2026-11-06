@@ -79,8 +79,9 @@ public enum Validate {
         return s
     }
 
-    public static func service(_ v: Any?) throws -> String {
-        guard let v, !(v is NSNull) else { return "iMessage" }
+    /// nil means auto: send into the existing chat, else pick by the recipient's history.
+    public static func service(_ v: Any?) throws -> String? {
+        guard let v, !(v is NSNull) else { return nil }
         guard let s = v as? String, ["iMessage", "SMS"].contains(s) else {
             throw BridgeError.invalid("service must be \"iMessage\" or \"SMS\"")
         }
